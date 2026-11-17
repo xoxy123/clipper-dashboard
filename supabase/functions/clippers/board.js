@@ -2,12 +2,12 @@
 // rows, returns the board. No I/O.
 //
 // "Most views" ranks by total views on the profile at the latest scan.
-// "Most improved" ranks by views gained since the previous weekly scan (the
-// newest ok snapshot taken at least MIN_GAP_DAYS before the latest one), ties
-// broken by followers gained. A clipper with only one scan has no week yet and
-// is not on the improved board.
+// "Most improved" ranks by views gained in the last week: since the newest ok
+// snapshot taken at least MIN_GAP_DAYS before the latest one (scans run daily,
+// so that is the one about 7 days back), ties broken by followers gained. A
+// clipper without a scan that old has no week yet and is not on that board.
 
-export const MIN_GAP_DAYS = 5;
+export const MIN_GAP_DAYS = 6.5;
 const DAY = 86400000;
 
 const diff = (a, b) => (a == null || b == null ? null : a - b);
@@ -82,4 +82,51 @@ export function boardFor(username, summary) {
 export function cleanUsername(input) {
   const u = String(input ?? '').trim().replace(/^@/, '').replace(/^https?:\/\/(www\.)?tiktok\.com\/@/i, '').replace(/[/?].*$/, '').toLowerCase();
   return /^[a-z0-9_.]{2,24}$/.test(u) ? u : null;
+}
+
+// The 3-day clipping rule (William, 2026-11-17): a clipper who has not posted
+// a video for 3 days, has given no reason, and played Shredbound in those 3
+// days loses game access. Not playing at all excuses them.
+//
+// The clock starts at the newest of: their last video, when they joined, when
+// the owner gave access back, and when their last reason ended. While a reason
+// runs, the rule waits. A reason the owner turned down counts for nothing. "Played" is a beat that credited play time
+// (access_devices.last_played_at) within the last 3 days.
+export const RULE_MS = 72 * 3600 * 1000;
+
+const ms = v => (v == null || v === '' ? null : typeof v === 'number' ? v : Date.parse(v));
+
+/** @param {{ now: any, lastVideoAt?: any, joinedAt?: any, restoredAt?: any, reasons?: any[], lastPlayedAt?: any }} o */
+export function clipRule({ now, lastVideoAt, joinedAt, restoredAt, reasons = [], lastPlayedAt }) {
+  const n = ms(now);
+  let since = Math.max(...[lastVideoAt, joinedAt, restoredAt].map(ms).filter(v => v != null && !Number.isNaN(v)), 0);
+  let excuse = null;
+  for (const r of reasons) {
+    // A reason the owner ended is turned down: as if never given.
+    if ((r.ended_by ?? r.endedBy) === 'owner') continue;
+    const start = ms(r.created_at ?? r.createdAt);
+    const end = Math.min(ms(r.until), ms(r.ended_at ?? r.endedAt) ?? Infinity);
+    if (start <= n && n < end) {
+      if (!excuse || end > excuse.end) excuse = { ...r, end };
+    } else if (end <= n) {
+      since = Math.max(since, end);
+    }
+  }
+  const dueAt = since + RULE_MS;
+  const played = ms(lastPlayedAt) != null && ms(lastPlayedAt) >= n - RULE_MS;
+  return {
+    since: new Date(since).toISOString(),
+    dueAt: new Date(dueAt).toISOString(),
+    excusedUntil: excuse ? new Date(excuse.end).toISOString() : null,
+    playedRecently: played,
+    revoke: !excuse && n >= dueAt && played,
+  };
+}
+
+// Game access as a clipper sees it, from their code row.
+export function accessStatus(code, removedAt) {
+  if (removedAt) return 'removed';
+  if (!code) return 'none';
+  if (!code.revoked_at) return 'active';
+  return code.revoked_reason === 'inactive' ? 'lost' : 'taken';
 }

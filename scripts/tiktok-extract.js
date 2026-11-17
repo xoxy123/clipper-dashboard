@@ -5,6 +5,8 @@
 // Followers, likes and video count come exact from the page's own data block.
 // Views are the sum of every video's play count: exact from TikTok's item_list
 // responses where caught, else parsed from the grid label ("12.3K").
+// lastVideoAt is the newest post's upload time, read from the post ids; the
+// 3-day clipping rule needs it.
 (async () => {
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const parse = s => {
@@ -41,10 +43,12 @@
     still = n === last ? still + 1 : 0; last = n;
   }
   for (const b of window.__clipperPlays || []) take(b);
-  let views = 0, exact = 0, tiles = 0;
+  let views = 0, exact = 0, tiles = 0, newest = 0;
   for (const el of document.querySelectorAll('[data-e2e=user-post-item]')) {
     const id = (el.querySelector('a[href*="/video/"],a[href*="/photo/"]')?.href.match(/\/(?:video|photo)\/(\d+)/) || [])[1];
     tiles++;
+    // A TikTok post id starts with its upload time: the top 32 bits are Unix seconds.
+    if (id) { const t = Number(BigInt(id) >> 32n) * 1000; if (t > newest && t <= Date.now() + 864e5) newest = t; }
     if (id && plays.has(id)) { views += plays.get(id); exact++; }
     else views += parse(el.querySelector('[data-e2e=video-views]')?.textContent) || 0;
   }
@@ -55,6 +59,7 @@
     likes: Number(s.heartCount ?? s.heart) || 0,
     videos: videoCount,
     views,
+    lastVideoAt: newest ? new Date(newest).toISOString() : null,
     viewsCounted: tiles,
     viewsExact: exact,
     private: !!user.user.privateAccount,

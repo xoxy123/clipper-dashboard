@@ -1,6 +1,17 @@
 import { supabaseUrl, supabaseAnonKey } from './config.js';
 const url = supabaseUrl.replace(/\/$/, '') + '/functions/v1/clippers';
-const text = { bad_code: 'Wrong clipper code.', bad_username: 'That is not a TikTok username. Letters, numbers, _ and . only.', invalid: 'Please join again.', limited: 'Too many tries. Wait 10 minutes.', server: 'Server error. Try again.' };
+const text = {
+  bad_code: 'Wrong code.',
+  bad_username: 'Type your TikTok username (letters, numbers, _ and . only).',
+  taken: 'That TikTok username already joined. Log in with your game code instead (or DM willll0838 on Discord).',
+  removed: 'This account was removed. DM willll0838 on Discord.',
+  invalid: 'Please log in again.',
+  forbidden: 'Only the owner can do that.',
+  limited: 'Too many tries. Wait 10 minutes.',
+  bad_request: 'Check the fields and try again.',
+  not_found: 'Not found. Refresh the page.',
+  server: 'Server error. Try again.',
+};
 export class ApiError extends Error { constructor(code, message) { super(message); this.code = code; } }
 export async function call(action, payload = {}, fetcher = fetch) {
   let res;

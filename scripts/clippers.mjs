@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Admin calls to the "clippers" edge function for the weekly scan.
+// Admin calls to the "clippers" edge function for the daily scan.
 //   node scripts/clippers.mjs list                 -> prints usernames, one per line
 //   node scripts/clippers.mjs record < snaps.json  -> records snapshots (JSON array)
 //   node scripts/clippers.mjs remove <username>
@@ -26,5 +26,7 @@ else if (cmd === 'record') {
   const snapshots = JSON.parse(readFileSync(0, 'utf8'));
   const r = await call('admin.record', { snapshots: Array.isArray(snapshots) ? snapshots : [snapshots] });
   console.log(`recorded ${r.recorded}, skipped ${r.skipped}`);
+  // The 3-day rule runs on every fresh reading: these clippers just lost game access.
+  console.log(r.lostAccess?.length ? `lost game access (3-day rule): ${r.lostAccess.join(', ')}` : 'nobody lost game access');
 } else if (cmd === 'remove' && arg) { await call('admin.remove', { username: arg }); console.log('removed ' + arg); }
 else { console.error('usage: list | record < snapshots.json | remove <username>'); process.exit(2); }
