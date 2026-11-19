@@ -213,13 +213,13 @@ export function playtestersAdmin(list, now = Date.now()) {
 <td class="mono">${esc(p.code || '—')}</td>
 <td>${p.gameNames.length ? p.gameNames.map(esc).join(', ') : '<span class="muted">not yet</span>'}</td>
 <td>${p.buyer ? `${money(p.buyer.amount, p.buyer.currency)}<br><small class="muted">${esc(date(p.buyer.paidAt))}${p.buyer.country ? ' · ' + esc(p.buyer.country) : ''}</small>` : '—'}</td>
-<td>${p.buyer ? (p.buyer.mail === 'sent' ? '<span class="ok-text">sent</span>' : `<span class="warn-text">${esc(p.buyer.mail)}</span>`) : '—'}</td>
+<td>${p.buyer?.checkout ? '<span class="ok-text">Checkout</span>' : p.buyer ? (p.buyer.mail === 'sent' ? '<span class="ok-text">Email sent</span>' : `<span class="warn-text">Email ${esc(p.buyer.mail)}</span>`) : '—'}</td>
 <td class="n">${p.devices}${p.maxDevices ? ` / ${p.maxDevices}` : ''}</td>
 <td>${p.lastSeen ? rel(p.lastSeen, now) : 'never'}</td>
 <td class="actions">${p.active ? `<button class="text-button danger" data-act="code-off" data-id="${esc(p.id)}">Take access</button>` : `<button class="text-button" data-act="code-on" data-id="${esc(p.id)}">Give access back</button>`}</td></tr>`;
-  const table = rows => `<div class="scroll"><table class="admin"><thead><tr><th>Who</th><th>Type</th><th>Game code</th><th>In-game name</th><th>Paid</th><th>Code mail</th><th class="n">Devices</th><th>Last seen</th><th></th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>`;
+  const table = rows => `<div class="scroll"><table class="admin"><thead><tr><th>Who</th><th>Type</th><th>Game code</th><th>In-game name</th><th>Paid</th><th>Code delivery</th><th class="n">Devices</th><th>Last seen</th><th></th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>`;
   return `<section aria-labelledby="pt"><div class="section-head"><h1 id="pt">Playtesters</h1><span class="eyebrow">${active.length} with access · ${buyers} bought</span></div>
-<p class="note">Buyers are added by themselves: when someone pays on the website they get a code by mail within a minute and show up here. The 3-day clipping rule never removes these; only you can.</p>
+<p class="note">Paid Shredbound orders appear here with the buyer’s checkout email, personal game code and delivery method.</p>
 ${active.length ? table(active) : '<p class="empty">Nobody yet.</p>'}
 ${off.length ? `<details class="all"><summary>No access (${off.length})</summary>${table(off)}</details>` : ''}</section>`;
 }

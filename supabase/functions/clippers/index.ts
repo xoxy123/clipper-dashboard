@@ -250,7 +250,7 @@ async function playtesters(clipperCodeIds: number[]) {
   const ids = codes.map(c => Number(c.id));
   if (!ids.length) return [];
   const [orders, devs, riders] = await Promise.all([
-    supabase.from("store_orders").select("code_id, buyer_name, email, country, amount_total, currency, paid_at, code_text, mail_status").in("code_id", ids),
+    supabase.from("store_orders").select("code_id, buyer_name, email, country, amount_total, currency, paid_at, code_text, mail_status, checkout_delivery").in("code_id", ids),
     supabase.from("access_devices").select("code_id, last_seen, play_seconds").in("code_id", ids),
     supabase.from("rider_profiles").select("code_id, username").in("code_id", ids),
   ]);
@@ -265,7 +265,10 @@ async function playtesters(clipperCodeIds: number[]) {
       active: !c.revoked_at,
       createdAt: c.created_at,
       code: o ? o.code_text : null,
-      buyer: o ? { name: o.buyer_name, email: o.email, country: o.country, amount: o.amount_total, currency: o.currency, paidAt: o.paid_at, mail: o.mail_status } : null,
+      buyer: o ? {
+        name: o.buyer_name, email: o.email, country: o.country, amount: o.amount_total,
+        currency: o.currency, paidAt: o.paid_at, mail: o.mail_status, checkout: o.checkout_delivery === true,
+      } : null,
       gameNames: ((must(riders) ?? []) as { code_id: number; username: string }[]).filter(r => Number(r.code_id) === id).map(r => r.username),
       devices: d.length,
       maxDevices: c.max_devices,

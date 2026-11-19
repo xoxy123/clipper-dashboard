@@ -156,12 +156,15 @@ test('access status words', () => {
 import { playtestersAdmin } from '../src/view.js';
 test('playtesters tab lists buyers and playtest codes apart from clippers', () => {
   const html = playtestersAdmin([
-    { id: 31, name: 'Köp jenna burke', type: 'buyer', active: true, code: 'SB-1234', buyer: { name: 'jenna burke', email: 'a@b.c', country: 'CA', amount: 1900, currency: 'usd', paidAt: '2026-11-18T22:01:36Z', mail: 'sent' }, gameNames: [], devices: 0, maxDevices: 1, lastSeen: null },
+    { id: 31, name: 'Köp jenna burke', type: 'buyer', active: true, code: 'SB-1234', buyer: { name: 'jenna burke', email: 'a@b.c', country: 'CA', amount: 1900, currency: 'usd', paidAt: '2026-11-18T22:01:36Z', mail: 'pending', checkout: true }, gameNames: [], devices: 0, maxDevices: 1, lastSeen: null },
     { id: 28, name: 'Jack', type: 'playtester', active: true, code: null, buyer: null, gameNames: ['jackrides'], devices: 1, maxDevices: 1, lastSeen: '2026-11-18T20:00:00Z' },
     { id: 1, name: 'SBtemp1', type: 'playtester', active: false, code: null, buyer: null, gameNames: [], devices: 21, maxDevices: null, lastSeen: null },
   ], Date.parse('2026-11-19T00:00:00Z'));
   assert.match(html, /2 with access · 1 bought/);
   assert.match(html, /\$19\.00/);
+  assert.match(html, /<th>Code delivery<\/th>/);
+  assert.match(html, /<span class="ok-text">Checkout<\/span>/);
+  assert.match(html, /a@b\.c/);
   assert.match(html, /jackrides/);
   assert.match(html, /No access \(1\)/);
   assert.doesNotMatch(html, /undefined|NaN/);
