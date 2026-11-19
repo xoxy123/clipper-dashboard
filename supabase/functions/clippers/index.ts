@@ -332,7 +332,9 @@ async function join(req: Request, body: Record<string, unknown>) {
     if (data && !data.removed_at) return json(req, { ok: true, role: "clipper", username: data.username, token: await clipperToken(data.username) });
     if (data?.removed_at) return json(req, { ok: false, error: "removed" });
   }
-  if (!typed || !same(await sha256(lower), c.join_code_sha256)) {
+  // Applying needs no code (William, 2026-11-19): an empty code with a TikTok
+  // username and an email is an application; the owner approves it.
+  if (typed && !same(await sha256(lower), c.join_code_sha256)) {
     await fail(req);
     return json(req, { ok: false, error: "bad_code" });
   }
