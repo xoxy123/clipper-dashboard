@@ -1,5 +1,5 @@
 import { call } from './api.js';
-import { boards, myAccount, events, clippersAdmin, playtestersAdmin, joinForm, nav, date, TABS } from './view.js';
+import { boards, myAccount, events, clippersAdmin, playtestersAdmin, applicationsAdmin, joinForm, nav, date, TABS } from './view.js';
 const $ = id => document.getElementById(id);
 const main = $('main'), who = $('who'), logout = $('logout'), scan = $('scan'), tabs = $('tabs'), toast = $('toast');
 const KEY = 'clippers.token';
@@ -20,6 +20,7 @@ function showJoin(error = '') {
     btn.disabled = true; err.textContent = '';
     try {
       const r = await call('join', { code: form.code.value, username: form.username.value, email: form.email.value });
+      if (r.pending) { main.innerHTML = `<section class="join"><h1>Application sent</h1><p>Thanks @${r.username}! You'll get a mail as soon as you're approved, with your own code and how to log in.</p></section>`; return; }
       token = r.token; store.set(token); location.hash = r.role === 'owner' ? '#clippers' : '#account'; await load();
     } catch (x) { err.textContent = x.message; btn.disabled = false; }
   });
@@ -29,7 +30,7 @@ function render() {
   if (!data) return;
   const t = tab(), owner = data.role === 'owner';
   tabs.hidden = false; tabs.innerHTML = nav(data.role, t);
-  const html = t === 'account' ? myAccount(data.me) : t === 'events' ? events(data.events, owner, Date.now(), editing) : t === 'clippers' ? clippersAdmin(data.clippers || []) : t === 'playtesters' ? playtestersAdmin(data.playtesters || []) : boards(data.board, data.me?.username);
+  const html = t === 'account' ? myAccount(data.me) : t === 'events' ? events(data.events, owner, Date.now(), editing) : t === 'clippers' ? clippersAdmin(data.clippers || []) : t === 'playtesters' ? playtestersAdmin(data.playtesters || []) : t === 'applications' ? applicationsAdmin(data.applications || []) : boards(data.board, data.me?.username);
   main.innerHTML = html;
   if (t === 'events' && editing) $('event-form')?.querySelector('input')?.focus();
 }
@@ -75,6 +76,8 @@ main.addEventListener('click', async e => {
   else if (a === 'code-off') { if (confirm('Take this game code? It stops working in the game.')) act(b, 'owner.code', { id: Number(b.dataset.id), active: false }, 'Access taken.'); }
   else if (a === 'code-on') act(b, 'owner.code', { id: Number(b.dataset.id), active: true }, 'Access given back.');
   else if (a === 'welcome') act(b, 'owner.welcome', { username: user }, 'Code mail sent again.');
+  else if (a === 'approve') act(b, 'owner.approve', { username: user }, `@${user} approved. Code mail sent.`);
+  else if (a === 'reject') { if (confirm(`Reject @${user}?`)) act(b, 'owner.reject', { username: user }, `@${user} rejected.`); }
   else if (a === 'remove') { if (confirm(`Remove @${user}? Their game code stops working and they cannot join again.`)) act(b, 'owner.remove', { username: user }, `@${user} removed.`); }
 });
 

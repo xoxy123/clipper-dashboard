@@ -23,6 +23,7 @@
 // POST JSON {action, ...}:
 //   join {code, username?, email?} -> {ok, token, role, username?, mailed?}  (a new clipper gives an email and gets the welcome mail)
 //   owner.welcome {token, username}  mails a clipper's welcome again
+//   owner.approve {token, username} | owner.reject {token, username}   an application (join makes one: {ok, pending:true})
 //   state {token}                 -> {ok, role, board, events, me? | clippers?}
 //   reason {token, reason, until} (clipper) | reason.end {token} (clipper)
 //   owner.access {token, username, active} | owner.remove {token, username}
@@ -172,6 +173,8 @@ interface ReasonRow { id: number; username: string; reason: string; created_at: 
 async function accounts(includeRemoved = false): Promise<Account[]> {
   let q = supabase.from("clipper_accounts").select("username, joined_at, removed_at, game_code, game_code_id, access_restored_at, lost_access_at, email, welcome_mailed_at, welcome_error");
   if (!includeRemoved) q = q.is("removed_at", null);
+  // Applicants waiting for (or turned down by) the owner are not clippers yet.
+  q = q.eq("status", "approved");
   return (must(await q.order("username")) ?? []) as Account[];
 }
 async function snapshots(sinceDays = 120) {
@@ -291,6 +294,8 @@ async function state(w: Who) {
     const ids = accs.map(a => Number(a.game_code_id)).filter(Boolean);
     const [cs, ds, rs] = await Promise.all([codes(ids), devices(ids), reasons()]);
     out.playtesters = await playtesters(ids);
+    out.applications = ((must(await supabase.from("clipper_accounts").select("username, email, applied_at, status").in("status", ["pending", "rejected"]).order("applied_at", { ascending: false })) ?? []) as
+      { username: string; email: string | null; applied_at: string | null; status: string }[]).map(a => ({ username: a.username, email: a.email, appliedAt: a.applied_at, status: a.status }));
     out.clippers = accs.map(a => {
       const row = summary.rows.find(r => r.username === a.username);
       const mine = rs.filter(r => r.username === a.username);
@@ -337,11 +342,24 @@ async function join(req: Request, body: Record<string, unknown>) {
   const typedEmail = String(body.email ?? "").trim();
   const email = typedEmail ? cleanEmail(typedEmail) : null;
   if (typedEmail && !email) return json(req, { ok: false, error: "bad_email" });
-  const { data: existing } = await supabase.from("clipper_accounts").select("username, removed_at").eq("username", username).maybeSingle();
-  if (existing?.removed_at) return json(req, { ok: false, error: "removed" });
+  const { data: existing } = await supabase.from("clipper_accounts").select("username, removed_at, status").eq("username", username).maybeSingle();
+  if (existing?.removed_at || existing?.status === "rejected") return json(req, { ok: false, error: "removed" });
+  if (existing?.status === "pending") return json(req, { ok: false, error: "pending" });
   if (existing) return json(req, { ok: false, error: "taken" });
 
-  // A new clipper: their own game code first, then the account that holds it.
+  // A new clipper applies: the owner approves in the dashboard, and only then the
+  // game code is made and mailed (owner.approve).
+  if (!email) return json(req, { ok: false, error: "bad_email" });
+  const { error } = await supabase.from("clipper_accounts").insert({ username, email, status: "pending", applied_at: new Date().toISOString() });
+  if (error) {
+    if ((error as { code?: string }).code === "23505") return json(req, { ok: false, error: "taken" });
+    throw error;
+  }
+  return json(req, { ok: true, pending: true, username });
+}
+
+// Makes an approved clipper's own game code and stores it on their account.
+async function makeGameCode(username: string): Promise<string> {
   let codeId = 0, gameCode = "";
   for (let i = 0; i < 5 && !codeId; i++) {
     gameCode = newGameCode();
@@ -352,14 +370,15 @@ async function join(req: Request, body: Record<string, unknown>) {
     else if (error && (error as { code?: string }).code !== "23505") throw error;
   }
   if (!codeId) throw new Error("no free game code");
-  const { error } = await supabase.from("clipper_accounts").insert({ username, email, game_code: gameCode, game_code_id: codeId });
+  const now = new Date().toISOString();
+  const { error } = await supabase.from("clipper_accounts")
+    .update({ game_code: gameCode, game_code_id: codeId, status: "approved", decided_at: now, joined_at: now })
+    .eq("username", username).eq("status", "pending");
   if (error) {
     await supabase.from("access_codes").delete().eq("id", codeId);
-    if ((error as { code?: string }).code === "23505") return json(req, { ok: false, error: "taken" });
     throw error;
   }
-  const mailed = email ? await sendWelcome(username, email, gameCode) : false;
-  return json(req, { ok: true, role: "clipper", username, mailed, token: await clipperToken(username) });
+  return gameCode;
 }
 
 // Mails a clipper their code, the dashboard link and the home-screen steps.
@@ -517,6 +536,18 @@ Deno.serve(async req => {
         if (mine) return json(req, { ok: false, error: "bad_request" }, 400);
         must(await supabase.from("access_codes").update({ revoked_at: body.active === true ? null : new Date().toISOString(), revoked_reason: null }).eq("id", id));
         return json(req, { ok: true });
+      }
+      if (action === "owner.approve" || action === "owner.reject") {
+        const username = cleanUsername(body.username);
+        const { data: a } = await supabase.from("clipper_accounts").select("username, email, status").eq("username", username ?? "").maybeSingle();
+        if (!a || a.status !== "pending") return json(req, { ok: false, error: "not_found" }, 404);
+        if (action === "owner.reject") {
+          must(await supabase.from("clipper_accounts").update({ status: "rejected", decided_at: new Date().toISOString() }).eq("username", a.username));
+          return json(req, { ok: true });
+        }
+        const code = await makeGameCode(a.username);
+        const mailed = a.email ? await sendWelcome(a.username, a.email, code) : false;
+        return json(req, { ok: true, mailed });
       }
       if (action === "owner.welcome") {
         const username = cleanUsername(body.username);

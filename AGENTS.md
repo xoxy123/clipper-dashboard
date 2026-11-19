@@ -26,6 +26,9 @@ Sections (hash routing in `src/app.js`, `TABS` in `src/view.js`):
   - their TikTok stats with weekly change, and a views chart (inline SVG).
 - **Events** (everyone sees them; only the owner writes): title, prize, details, optional start,
   end, with a live countdown.
+- **Applications** (owner only): joining with the clipper code is an application (TikTok + email).
+  Approve makes the game code and mails it (approved + code + dashboard link + iPhone home-screen
+  steps); Reject turns them down. `owner.approve` / `owner.reject`.
 - **Playtesters** (owner only): every game code that is not a clipper's. Buyers are added by
   themselves: a paid Stripe checkout makes a code and mails it within a minute (the `store-orders`
   function in the Shredbound repo). Shown: name, email, type (Bought or Playtester), game code,

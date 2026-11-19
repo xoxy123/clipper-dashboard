@@ -2,13 +2,13 @@
 // get the code by mail and link to dashboard and instructions that they should go
 // safari click on that logo then that to add to homepage like real iphone logos").
 export const DASHBOARD_URL = "https://xoxy123.github.io/clipper-dashboard/";
-export const WELCOME_SUBJECT = "Your Shredbound clipper code";
+export const WELCOME_SUBJECT = "You're approved: your Shredbound clipper code";
 
 export function welcomeMailText(tiktok: string, code: string): string {
   return [
     `Hello @${tiktok},`,
     "",
-    "Welcome to the Shredbound clippers 🙏🏼",
+    "You're approved as a Shredbound clipper, welcome 🙏🏼",
     "",
     "Your own code is",
     "",

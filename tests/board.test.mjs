@@ -166,3 +166,11 @@ test('playtesters tab lists buyers and playtest codes apart from clippers', () =
   assert.match(html, /No access \(1\)/);
   assert.doesNotMatch(html, /undefined|NaN/);
 });
+
+import { applicationsAdmin } from '../src/view.js';
+test('applications tab: approve or reject who applied', () => {
+  const html = applicationsAdmin([{ username: 'new_one', email: 'n@x.se', appliedAt: '2026-11-19T10:00:00Z', status: 'pending' }, { username: 'no', email: null, appliedAt: null, status: 'rejected' }], Date.parse('2026-11-19T12:00:00Z'));
+  assert.match(html, /1 waiting/);
+  assert.match(html, /data-act="approve" data-user="new_one"/);
+  assert.match(html, /Rejected \(1\)/);
+});

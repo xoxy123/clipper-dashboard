@@ -30,7 +30,7 @@ export const APPEAL = 'To appeal, DM <b>willll0838</b> on Discord or mail <a hre
 
 // ------------------------------------------------------------------ frame
 
-export const TABS = { clipper: [['board', 'Leaderboard'], ['account', 'My account'], ['events', 'Events']], owner: [['board', 'Leaderboard'], ['events', 'Events'], ['clippers', 'Clippers'], ['playtesters', 'Playtesters']] };
+export const TABS = { clipper: [['board', 'Leaderboard'], ['account', 'My account'], ['events', 'Events']], owner: [['applications', 'Applications'], ['board', 'Leaderboard'], ['events', 'Events'], ['clippers', 'Clippers'], ['playtesters', 'Playtesters']] };
 export const nav = (role, current) => TABS[role].map(([id, label]) => `<a href="#${id}"${id === current ? ' aria-current="page"' : ''}>${label}</a>`).join('');
 
 // ------------------------------------------------------------------ leaderboard
@@ -224,8 +224,23 @@ ${active.length ? table(active) : '<p class="empty">Nobody yet.</p>'}
 ${off.length ? `<details class="all"><summary>No access (${off.length})</summary>${table(off)}</details>` : ''}</section>`;
 }
 
+// ------------------------------------------------------------------ owner: applications
+
+// Who applied with the clipper code. Approve makes their game code and mails it with the
+// dashboard link and the home-screen steps; Reject turns them down (they cannot apply again).
+export function applicationsAdmin(list, now = Date.now()) {
+  const pending = list.filter(a => a.status === 'pending'), rejected = list.filter(a => a.status === 'rejected');
+  const row = a => `<tr><td><a href="${profile(a.username)}" target="_blank" rel="noopener">@${esc(a.username)}</a></td><td>${esc(a.email || '—')}</td><td>${a.appliedAt ? rel(a.appliedAt, now) : '—'}</td>
+<td class="actions">${a.status === 'pending' ? `<button class="primary small" data-act="approve" data-user="${esc(a.username)}">Approve</button><button class="text-button danger" data-act="reject" data-user="${esc(a.username)}">Reject</button>` : ''}</td></tr>`;
+  const table = rows => `<div class="scroll"><table class="admin"><thead><tr><th>TikTok</th><th>Email</th><th>Applied</th><th></th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>`;
+  return `<section aria-labelledby="ap"><div class="section-head"><h1 id="ap">Applications</h1><span class="eyebrow">${pending.length} waiting</span></div>
+<p class="note">Approve sends them a mail: they're approved, their own game code, the dashboard link and how to add it to the iPhone home screen.</p>
+${pending.length ? table(pending) : '<p class="empty">No applications waiting.</p>'}
+${rejected.length ? `<details class="all"><summary>Rejected (${rejected.length})</summary>${table(rejected)}</details>` : ''}</section>`;
+}
+
 // ------------------------------------------------------------------ login
 
 export const joinForm = (error = '') => `<section class="join" aria-labelledby="join-title"><div><p class="eyebrow">Shredbound clippers</p><h1 id="join-title">Clipper dashboard</h1></div>
-<form id="join" novalidate><label>Code<input name="code" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required></label><label>TikTok username<input name="username" placeholder="@yourname" autocomplete="off" autocapitalize="none" spellcheck="false"></label><label>Email <span class="muted">(first time: your code is mailed here)</span><input name="email" type="email" placeholder="you@mail.com" autocomplete="email" autocapitalize="none" spellcheck="false"></label><p class="hint muted">First time? Use the clipper code, your TikTok username and your email: your own code comes by mail. After that, your own code is all you need.</p><p class="error" id="join-error">${esc(error)}</p><button class="primary" type="submit">Enter</button></form>
+<form id="join" novalidate><label>Code<input name="code" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required></label><label>TikTok username<input name="username" placeholder="@yourname" autocomplete="off" autocapitalize="none" spellcheck="false"></label><label>Email <span class="muted">(first time: we mail you when you're approved)</span><input name="email" type="email" placeholder="you@mail.com" autocomplete="email" autocapitalize="none" spellcheck="false"></label><p class="hint muted">First time? Apply with the clipper code, your TikTok username and your email. When you're approved, your own code comes by mail, and that code is all you need after that.</p><p class="error" id="join-error">${esc(error)}</p><button class="primary" type="submit">Enter</button></form>
 <p class="muted">Your public TikTok profile is read once a day: followers, likes, views and when you last posted. Nothing is posted or changed.</p></section>`;
