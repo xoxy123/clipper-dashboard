@@ -1,5 +1,5 @@
 import { call } from './api.js';
-import { boards, myAccount, events, clippersAdmin, joinForm, nav, date, TABS } from './view.js';
+import { boards, myAccount, events, clippersAdmin, playtestersAdmin, joinForm, nav, date, TABS } from './view.js';
 const $ = id => document.getElementById(id);
 const main = $('main'), who = $('who'), logout = $('logout'), scan = $('scan'), tabs = $('tabs'), toast = $('toast');
 const KEY = 'clippers.token';
@@ -29,7 +29,7 @@ function render() {
   if (!data) return;
   const t = tab(), owner = data.role === 'owner';
   tabs.hidden = false; tabs.innerHTML = nav(data.role, t);
-  const html = t === 'account' ? myAccount(data.me) : t === 'events' ? events(data.events, owner, Date.now(), editing) : t === 'clippers' ? clippersAdmin(data.clippers || []) : boards(data.board, data.me?.username);
+  const html = t === 'account' ? myAccount(data.me) : t === 'events' ? events(data.events, owner, Date.now(), editing) : t === 'clippers' ? clippersAdmin(data.clippers || []) : t === 'playtesters' ? playtestersAdmin(data.playtesters || []) : boards(data.board, data.me?.username);
   main.innerHTML = html;
   if (t === 'events' && editing) $('event-form')?.querySelector('input')?.focus();
 }
@@ -72,6 +72,8 @@ main.addEventListener('click', async e => {
   else if (a === 'give') act(b, 'owner.access', { username: user, active: true }, `@${user} can play again. Their 3 days start now.`);
   else if (a === 'take') { if (confirm(`Take @${user}'s game access?`)) act(b, 'owner.access', { username: user, active: false }, 'Access taken.'); }
   else if (a === 'reason-turn-down') { if (confirm('Turn down this reason? The 3-day rule applies again right away.')) act(b, 'owner.reason.end', { id: Number(b.dataset.id) }, 'Reason turned down.'); }
+  else if (a === 'code-off') { if (confirm('Take this game code? It stops working in the game.')) act(b, 'owner.code', { id: Number(b.dataset.id), active: false }, 'Access taken.'); }
+  else if (a === 'code-on') act(b, 'owner.code', { id: Number(b.dataset.id), active: true }, 'Access given back.');
   else if (a === 'remove') { if (confirm(`Remove @${user}? Their game code stops working and they cannot join again.`)) act(b, 'owner.remove', { username: user }, `@${user} removed.`); }
 });
 

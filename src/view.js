@@ -30,7 +30,7 @@ export const APPEAL = 'To appeal, DM <b>willll0838</b> on Discord or mail <a hre
 
 // ------------------------------------------------------------------ frame
 
-export const TABS = { clipper: [['board', 'Leaderboard'], ['account', 'My account'], ['events', 'Events']], owner: [['board', 'Leaderboard'], ['events', 'Events'], ['clippers', 'Clippers']] };
+export const TABS = { clipper: [['board', 'Leaderboard'], ['account', 'My account'], ['events', 'Events']], owner: [['board', 'Leaderboard'], ['events', 'Events'], ['clippers', 'Clippers'], ['playtesters', 'Playtesters']] };
 export const nav = (role, current) => TABS[role].map(([id, label]) => `<a href="#${id}"${id === current ? ' aria-current="page"' : ''}>${label}</a>`).join('');
 
 // ------------------------------------------------------------------ leaderboard
@@ -196,6 +196,31 @@ export function clippersAdmin(list, now = Date.now()) {
 <p class="note">Everyone joins with the clipper code and gets their own game code. The daily scan takes the game code of anyone who played without posting for 3 days, unless they gave a reason.</p>
 ${live.length ? `<div class="scroll"><table class="admin"><thead><tr><th>Clipper</th><th>Game code</th><th>Status</th><th>Last video</th><th>Last played</th><th>Next video due</th><th>Reason</th><th class="n">Devices</th><th></th></tr></thead><tbody>${live.map(row).join('')}</tbody></table></div>` : '<p class="empty">Nobody has joined yet.</p>'}
 ${removed.length ? `<details class="all"><summary>Removed (${removed.length})</summary><div class="scroll"><table class="admin"><tbody>${removed.map(row).join('')}</tbody></table></div></details>` : ''}</section>`;
+}
+
+// ------------------------------------------------------------------ owner: playtesters and buyers
+
+const money = (cents, cur) => (cents == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: (cur || 'usd').toUpperCase() }).format(cents / 100));
+
+// Everyone with a game code who is not a clipper: buyers (added by themselves when they pay)
+// and playtest codes made by hand. The 3-day rule never touches them.
+export function playtestersAdmin(list, now = Date.now()) {
+  const active = list.filter(p => p.active), off = list.filter(p => !p.active);
+  const buyers = active.filter(p => p.type === 'buyer').length;
+  const row = p => `<tr><td><b>${esc(p.buyer?.name || p.name)}</b>${p.buyer?.email ? `<br><small class="muted">${esc(p.buyer.email)}</small>` : ''}</td>
+<td><span class="pill ${p.type === 'buyer' ? 'upcoming' : 'ok'}">${p.type === 'buyer' ? 'Bought' : 'Playtester'}</span></td>
+<td class="mono">${esc(p.code || '—')}</td>
+<td>${p.gameNames.length ? p.gameNames.map(esc).join(', ') : '<span class="muted">not yet</span>'}</td>
+<td>${p.buyer ? `${money(p.buyer.amount, p.buyer.currency)}<br><small class="muted">${esc(date(p.buyer.paidAt))}${p.buyer.country ? ' · ' + esc(p.buyer.country) : ''}</small>` : '—'}</td>
+<td>${p.buyer ? (p.buyer.mail === 'sent' ? '<span class="ok-text">sent</span>' : `<span class="warn-text">${esc(p.buyer.mail)}</span>`) : '—'}</td>
+<td class="n">${p.devices}${p.maxDevices ? ` / ${p.maxDevices}` : ''}</td>
+<td>${p.lastSeen ? rel(p.lastSeen, now) : 'never'}</td>
+<td class="actions">${p.active ? `<button class="text-button danger" data-act="code-off" data-id="${esc(p.id)}">Take access</button>` : `<button class="text-button" data-act="code-on" data-id="${esc(p.id)}">Give access back</button>`}</td></tr>`;
+  const table = rows => `<div class="scroll"><table class="admin"><thead><tr><th>Who</th><th>Type</th><th>Game code</th><th>In-game name</th><th>Paid</th><th>Code mail</th><th class="n">Devices</th><th>Last seen</th><th></th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>`;
+  return `<section aria-labelledby="pt"><div class="section-head"><h1 id="pt">Playtesters</h1><span class="eyebrow">${active.length} with access · ${buyers} bought</span></div>
+<p class="note">Buyers are added by themselves: when someone pays on the website they get a code by mail within a minute and show up here. The 3-day clipping rule never removes these; only you can.</p>
+${active.length ? table(active) : '<p class="empty">Nobody yet.</p>'}
+${off.length ? `<details class="all"><summary>No access (${off.length})</summary>${table(off)}</details>` : ''}</section>`;
 }
 
 // ------------------------------------------------------------------ login

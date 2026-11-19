@@ -25,7 +25,7 @@
 //   state {token}                 -> {ok, role, board, events, me? | clippers?}
 //   reason {token, reason, until} (clipper) | reason.end {token} (clipper)
 //   owner.access {token, username, active} | owner.remove {token, username}
-//   owner.reason.end {token, id}
+//   owner.reason.end {token, id} | owner.code {token, id, active}   (a playtester's or buyer's code)
 //   owner.event.save {token, id?, title, details, prize, startsAt, endsAt}
 //   owner.event.delete {token, id}
 //   admin.list | admin.record {snapshots} | admin.remove {username}   (x-admin-secret: the daily scan)
@@ -230,6 +230,40 @@ function accessView(a: Account, code: CodeRow | undefined, dev: { lastPlayedAt: 
   };
 }
 
+// Every game code that is not a clipper's: buyers (store_orders) and playtest
+// codes made by hand. The 3-day rule never touches these; only the owner does.
+async function playtesters(clipperCodeIds: number[]) {
+  const all = (must(await supabase.from("access_codes").select("id, name, note, created_at, revoked_at, max_devices").order("id", { ascending: false })) ?? []) as
+    { id: number; name: string; note: string | null; created_at: string; revoked_at: string | null; max_devices: number | null }[];
+  const codes = all.filter(c => !clipperCodeIds.includes(Number(c.id)));
+  const ids = codes.map(c => Number(c.id));
+  if (!ids.length) return [];
+  const [orders, devs, riders] = await Promise.all([
+    supabase.from("store_orders").select("code_id, buyer_name, email, country, amount_total, currency, paid_at, code_text, mail_status").in("code_id", ids),
+    supabase.from("access_devices").select("code_id, last_seen, play_seconds").in("code_id", ids),
+    supabase.from("rider_profiles").select("code_id, username").in("code_id", ids),
+  ]);
+  const order = new Map(((must(orders) ?? []) as Record<string, unknown>[]).map(o => [Number(o.code_id), o]));
+  return codes.map(c => {
+    const id = Number(c.id), o = order.get(id) as Record<string, unknown> | undefined;
+    const d = ((must(devs) ?? []) as { code_id: number; last_seen: string; play_seconds: number }[]).filter(x => Number(x.code_id) === id);
+    return {
+      id,
+      name: c.name,
+      type: o ? "buyer" : "playtester",
+      active: !c.revoked_at,
+      createdAt: c.created_at,
+      code: o ? o.code_text : null,
+      buyer: o ? { name: o.buyer_name, email: o.email, country: o.country, amount: o.amount_total, currency: o.currency, paidAt: o.paid_at, mail: o.mail_status } : null,
+      gameNames: ((must(riders) ?? []) as { code_id: number; username: string }[]).filter(r => Number(r.code_id) === id).map(r => r.username),
+      devices: d.length,
+      maxDevices: c.max_devices,
+      lastSeen: d.reduce((m: string | null, x) => (!m || x.last_seen > m ? x.last_seen : m), null),
+      playSeconds: d.reduce((n, x) => n + (Number(x.play_seconds) || 0), 0),
+    };
+  });
+}
+
 async function state(w: Who) {
   const accs = await accounts(w.role === "owner");
   const snaps = await snapshots();
@@ -248,6 +282,7 @@ async function state(w: Who) {
   } else {
     const ids = accs.map(a => Number(a.game_code_id)).filter(Boolean);
     const [cs, ds, rs] = await Promise.all([codes(ids), devices(ids), reasons()]);
+    out.playtesters = await playtesters(ids);
     out.clippers = accs.map(a => {
       const row = summary.rows.find(r => r.username === a.username);
       const mine = rs.filter(r => r.username === a.username);
@@ -440,6 +475,15 @@ Deno.serve(async req => {
         } else if (!(await setAccess(username, body.active === true))) {
           return json(req, { ok: false, error: "not_found" }, 404);
         }
+        return json(req, { ok: true });
+      }
+      if (action === "owner.code") {
+        // Turn a playtester's or buyer's code on or off. Clipper codes go through owner.access.
+        const id = Number(body.id);
+        if (!Number.isSafeInteger(id) || id <= 0) return json(req, { ok: false, error: "bad_request" }, 400);
+        const { data: mine } = await supabase.from("clipper_accounts").select("username").eq("game_code_id", id).maybeSingle();
+        if (mine) return json(req, { ok: false, error: "bad_request" }, 400);
+        must(await supabase.from("access_codes").update({ revoked_at: body.active === true ? null : new Date().toISOString(), revoked_reason: null }).eq("id", id));
         return json(req, { ok: true });
       }
       if (action === "owner.reason.end") {
