@@ -1,6 +1,6 @@
 // GitHub Pages gets only browser assets. Fails if a secret-looking value slipped in.
 import { mkdir, copyFile, readFile, writeFile, rm } from 'node:fs/promises';
-const files = ['index.html', 'style.css', 'app.js', 'api.js', 'view.js', 'config.js', 'favicon.svg', 'manifest.webmanifest'];
+const files = ['index.html', 'style.css', 'app.js', 'api.js', 'view.js', 'config.js', 'favicon.svg', 'manifest.webmanifest', 'shredbound-access.html', 'shredbound-access.js'];
 const binary = ['apple-touch-icon.png', 'icon-512.png'];
 await rm('dist', { recursive: true, force: true });
 await mkdir('dist', { recursive: true });

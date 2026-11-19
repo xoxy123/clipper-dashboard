@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex,nofollow">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src https://yptfcpxaihfboteltuhq.supabase.co; base-uri 'none'; form-action 'none'">
+  <title>Download Shredbound</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #121416; color: #f1f1ee; }
+    body { margin: 0; padding: clamp(1.1rem, 6vw, 4rem); }
+    main { max-width: 31rem; margin: 5vh auto 0; padding: clamp(1.25rem, 5vw, 2.5rem); border: 1px solid #4d5255; border-radius: 1rem; background: #1d2023; }
+    h1 { font-size: clamp(1.7rem, 6vw, 2.4rem); margin: 0 0 .6rem; line-height: 1.1; }
+    h2 { font-size: 1.12rem; margin: 1.5rem 0 .35rem; }
+    p { color: #d1d4d5; line-height: 1.5; }
+    label { display: block; margin-bottom: .4rem; font-weight: 600; }
+    input, button, .download { border-radius: .45rem; box-sizing: border-box; font: inherit; padding: .75rem .85rem; }
+    input { width: 100%; border: 1px solid #777d7f; background: #111315; color: inherit; }
+    button, .download { display: inline-block; margin-top: .8rem; background: #fbae6d; color: #20160e; border: 0; font-weight: 750; cursor: pointer; text-decoration: none; }
+    button:disabled { opacity: .6; cursor: wait; }
+    :focus-visible { outline: .18rem solid #ffe1ba; outline-offset: .18rem; }
+    code { display: inline-block; background: #111315; border: 1px solid #72787a; border-radius: .45rem; padding: .5rem .65rem; font-size: 1rem; }
+    .code-line { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; }
+    .code-line button { margin: 0; }
+    footer { margin-top: 1.5rem; font-size: .88rem; }
+    footer a { color: #ffbf8a; }
+    #feedback { min-height: 1em; color: #ffbf8a; }
+  </style>
+  <script src="./shredbound-access.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>Download Shredbound</h1>
+    <form id="claim" hidden>
+      <p>Confirm the email you used at Stripe checkout to see your download and personal game code.</p>
+      <label for="email">Checkout email</label>
+      <input id="email" type="email" autocomplete="email" maxlength="254" required>
+      <button id="claim-button" type="submit">Show my download</button>
+    </form>
+    <section id="download" aria-label="Your Shredbound download" hidden>
+      <p>Payment confirmed. Save your personal game code for this computer.</p>
+      <a id="download-link" class="download" rel="noreferrer">Download on itch.io</a>
+      <h2>Itch.io download password</h2>
+      <code id="download-password"></code>
+      <h2>Personal game code</h2>
+      <div class="code-line">
+        <code id="access-code"></code>
+        <button id="copy" type="button">Copy game code</button>
+      </div>
+      <p>Enter this code when you open Shredbound.</p>
+    </section>
+    <p id="feedback" role="status" aria-live="polite"></p>
+    <noscript><p>Enable JavaScript and reopen the page Stripe showed after payment.</p></noscript>
+    <footer><a href="mailto:shredboundofficial@gmail.com">Contact Shredbound support</a></footer>
+  </main>
+</body>
+</html>
