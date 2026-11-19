@@ -112,7 +112,7 @@ test('owner table lists codes, status and actions', () => {
   assert.match(html, /1 lost access/);
   assert.match(html, /Removed \(1\)/);
   assert.equal(rel('2026-11-20T09:00:00Z', now), '3 hours ago');
-  assert.match(joinForm('x'), /game code is enough/);
+  assert.match(joinForm("x"), /your own code comes by mail/);
 });
 
 import { clipRule, accessStatus, RULE_MS } from '../supabase/functions/clippers/board.js';

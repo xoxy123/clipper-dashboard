@@ -21,7 +21,8 @@
 // new owner code logs the old owner sessions out).
 //
 // POST JSON {action, ...}:
-//   join {code, username?}        -> {ok, token, role, username?}
+//   join {code, username?, email?} -> {ok, token, role, username?, mailed?}  (a new clipper gives an email and gets the welcome mail)
+//   owner.welcome {token, username}  mails a clipper's welcome again
 //   state {token}                 -> {ok, role, board, events, me? | clippers?}
 //   reason {token, reason, until} (clipper) | reason.end {token} (clipper)
 //   owner.access {token, username, active} | owner.remove {token, username}
@@ -33,11 +34,15 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { accessStatus, boardFor, cleanUsername, clipRule, summarize } from "./board.js";
+import { cleanEmail, sendMail } from "./mail.ts";
+import { WELCOME_SUBJECT, welcomeMailText } from "./welcome.ts";
 
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
 const DASHBOARD_ORIGIN = "https://xoxy123.github.io";
 const LOCAL_ORIGIN = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
+// The website (Lovable) shows the dashboard too: quantativestudios.com and Lovable's preview hosts.
+const SITE_ORIGIN = /^https:\/\/((www\.)?quantativestudios\.com|[a-z0-9-]+\.(lovable\.app|lovableproject\.com|lovable\.dev))$/;
 const MAX_BODY_BYTES = 200_000;
 const FAILS_PER_IP = 15;
 const FAIL_WINDOW_MS = 10 * 60_000;
@@ -109,7 +114,7 @@ function newGameCode() {
 
 function cors(req: Request) {
   const origin = req.headers.get("origin") || "";
-  const allow = origin === DASHBOARD_ORIGIN || LOCAL_ORIGIN.test(origin) ? origin : DASHBOARD_ORIGIN;
+  const allow = origin === DASHBOARD_ORIGIN || LOCAL_ORIGIN.test(origin) || SITE_ORIGIN.test(origin) ? origin : DASHBOARD_ORIGIN;
   return {
     "Access-Control-Allow-Origin": allow,
     "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-admin-secret, x-client-info",
@@ -156,13 +161,16 @@ interface Account {
   game_code_id: number | null;
   access_restored_at: string | null;
   lost_access_at: string | null;
+  email: string | null;
+  welcome_mailed_at: string | null;
+  welcome_error: string | null;
 }
 interface CodeRow { id: number; revoked_at: string | null; revoked_reason: string | null }
 interface DeviceRow { code_id: number; last_played_at: string | null; play_seconds: number }
 interface ReasonRow { id: number; username: string; reason: string; created_at: string; until: string; ended_at: string | null; ended_by: string | null }
 
 async function accounts(includeRemoved = false): Promise<Account[]> {
-  let q = supabase.from("clipper_accounts").select("username, joined_at, removed_at, game_code, game_code_id, access_restored_at, lost_access_at");
+  let q = supabase.from("clipper_accounts").select("username, joined_at, removed_at, game_code, game_code_id, access_restored_at, lost_access_at, email, welcome_mailed_at, welcome_error");
   if (!includeRemoved) q = q.is("removed_at", null);
   return (must(await q.order("username")) ?? []) as Account[];
 }
@@ -288,6 +296,8 @@ async function state(w: Who) {
       const mine = rs.filter(r => r.username === a.username);
       return {
         username: a.username,
+        email: a.email,
+        welcome: a.welcome_mailed_at ? "sent" : a.welcome_error ? "failed: " + a.welcome_error : a.email ? "not sent" : null,
         joinedAt: a.joined_at,
         removedAt: a.removed_at,
         lastScanError: row?.lastError ?? null,
@@ -323,6 +333,10 @@ async function join(req: Request, body: Record<string, unknown>) {
   }
   const username = cleanUsername(body.username);
   if (!username) return json(req, { ok: false, error: "bad_username" });
+  // Email: asked by the dashboard; an older copy of the page without the field still joins.
+  const typedEmail = String(body.email ?? "").trim();
+  const email = typedEmail ? cleanEmail(typedEmail) : null;
+  if (typedEmail && !email) return json(req, { ok: false, error: "bad_email" });
   const { data: existing } = await supabase.from("clipper_accounts").select("username, removed_at").eq("username", username).maybeSingle();
   if (existing?.removed_at) return json(req, { ok: false, error: "removed" });
   if (existing) return json(req, { ok: false, error: "taken" });
@@ -338,13 +352,31 @@ async function join(req: Request, body: Record<string, unknown>) {
     else if (error && (error as { code?: string }).code !== "23505") throw error;
   }
   if (!codeId) throw new Error("no free game code");
-  const { error } = await supabase.from("clipper_accounts").insert({ username, game_code: gameCode, game_code_id: codeId });
+  const { error } = await supabase.from("clipper_accounts").insert({ username, email, game_code: gameCode, game_code_id: codeId });
   if (error) {
     await supabase.from("access_codes").delete().eq("id", codeId);
     if ((error as { code?: string }).code === "23505") return json(req, { ok: false, error: "taken" });
     throw error;
   }
-  return json(req, { ok: true, role: "clipper", username, token: await clipperToken(username) });
+  const mailed = email ? await sendWelcome(username, email, gameCode) : false;
+  return json(req, { ok: true, role: "clipper", username, mailed, token: await clipperToken(username) });
+}
+
+// Mails a clipper their code, the dashboard link and the home-screen steps.
+// Never fails the caller: the result is kept on the account for the owner to see.
+async function sendWelcome(username: string, email: string, code: string): Promise<boolean> {
+  const password = (Deno.env.get("MAIL_APP_PASSWORD") ?? "").replace(/\s+/g, "");
+  const user = (Deno.env.get("MAIL_USER") ?? "shredboundofficial@gmail.com").trim();
+  let error: string | null = password ? null : "no mail password";
+  if (password) {
+    try {
+      await sendMail({ user, password, fromName: "Shredbound" }, { to: email, subject: WELCOME_SUBJECT, text: welcomeMailText(username, code) });
+    } catch (e) {
+      error = String((e as Error)?.message ?? e).slice(0, 200);
+    }
+  }
+  await supabase.from("clipper_accounts").update(error ? { welcome_error: error } : { welcome_mailed_at: new Date().toISOString(), welcome_error: null }).eq("username", username);
+  return !error;
 }
 
 async function setAccess(username: string, active: boolean) {
@@ -485,6 +517,12 @@ Deno.serve(async req => {
         if (mine) return json(req, { ok: false, error: "bad_request" }, 400);
         must(await supabase.from("access_codes").update({ revoked_at: body.active === true ? null : new Date().toISOString(), revoked_reason: null }).eq("id", id));
         return json(req, { ok: true });
+      }
+      if (action === "owner.welcome") {
+        const username = cleanUsername(body.username);
+        const { data: a } = await supabase.from("clipper_accounts").select("username, email, game_code").eq("username", username ?? "").maybeSingle();
+        if (!a?.email || !a.game_code) return json(req, { ok: false, error: "not_found" }, 404);
+        return json(req, { ok: await sendWelcome(a.username, a.email, a.game_code) });
       }
       if (action === "owner.reason.end") {
         const id = Number(body.id);

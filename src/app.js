@@ -19,7 +19,7 @@ function showJoin(error = '') {
     const btn = form.querySelector('button'), err = $('join-error');
     btn.disabled = true; err.textContent = '';
     try {
-      const r = await call('join', { code: form.code.value, username: form.username.value });
+      const r = await call('join', { code: form.code.value, username: form.username.value, email: form.email.value });
       token = r.token; store.set(token); location.hash = r.role === 'owner' ? '#clippers' : '#account'; await load();
     } catch (x) { err.textContent = x.message; btn.disabled = false; }
   });
@@ -74,6 +74,7 @@ main.addEventListener('click', async e => {
   else if (a === 'reason-turn-down') { if (confirm('Turn down this reason? The 3-day rule applies again right away.')) act(b, 'owner.reason.end', { id: Number(b.dataset.id) }, 'Reason turned down.'); }
   else if (a === 'code-off') { if (confirm('Take this game code? It stops working in the game.')) act(b, 'owner.code', { id: Number(b.dataset.id), active: false }, 'Access taken.'); }
   else if (a === 'code-on') act(b, 'owner.code', { id: Number(b.dataset.id), active: true }, 'Access given back.');
+  else if (a === 'welcome') act(b, 'owner.welcome', { username: user }, 'Code mail sent again.');
   else if (a === 'remove') { if (confirm(`Remove @${user}? Their game code stops working and they cannot join again.`)) act(b, 'owner.remove', { username: user }, `@${user} removed.`); }
 });
 

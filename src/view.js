@@ -184,9 +184,10 @@ export function clippersAdmin(list, now = Date.now()) {
     const acts = c.removedAt ? '' : [
       a.status === 'active' ? `<button class="text-button" data-act="take" data-user="${esc(c.username)}">Take access</button>` : `<button class="text-button" data-act="give" data-user="${esc(c.username)}">Give access back</button>`,
       r ? `<button class="text-button" data-act="reason-turn-down" data-id="${esc(r.id)}">Turn down reason</button>` : '',
+      c.email ? `<button class="text-button" data-act="welcome" data-user="${esc(c.username)}">Mail code again</button>` : '',
       `<button class="text-button danger" data-act="remove" data-user="${esc(c.username)}">Remove</button>`,
     ].join('');
-    return `<tr><td><a href="${profile(c.username)}" target="_blank" rel="noopener">@${esc(c.username)}</a>${c.lastScanError ? `<br><small class="error">scan: ${esc(c.lastScanError)}</small>` : ''}</td>
+    return `<tr><td><a href="${profile(c.username)}" target="_blank" rel="noopener">@${esc(c.username)}</a>${c.email ? `<br><small class="muted">${esc(c.email)}</small>` : ''}${c.welcome ? `<br><small class="${c.welcome === 'sent' ? 'ok-text' : 'warn-text'}">code mail: ${esc(c.welcome)}</small>` : ''}${c.lastScanError ? `<br><small class="error">scan: ${esc(c.lastScanError)}</small>` : ''}</td>
 <td class="mono">${esc(a.code || '—')}</td><td>${statusCell(c.removedAt ? { status: 'removed' } : a)}</td>
 <td>${a.lastVideoAt ? rel(a.lastVideoAt, now) : 'none'}</td><td>${a.lastPlayedAt ? rel(a.lastPlayedAt, now) : 'never'}</td><td>${due}</td>
 <td class="reason-cell">${r ? `${esc(r.reason)}<br><small class="muted">until ${esc(date(r.until))}</small>` : '—'}</td>
@@ -226,5 +227,5 @@ ${off.length ? `<details class="all"><summary>No access (${off.length})</summary
 // ------------------------------------------------------------------ login
 
 export const joinForm = (error = '') => `<section class="join" aria-labelledby="join-title"><div><p class="eyebrow">Shredbound clippers</p><h1 id="join-title">Clipper dashboard</h1></div>
-<form id="join" novalidate><label>Code<input name="code" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required></label><label>TikTok username<input name="username" placeholder="@yourname" autocomplete="off" autocapitalize="none" spellcheck="false"></label><p class="hint muted">First time? Use the clipper code and your TikTok username. Back on a new device? Your game code is enough.</p><p class="error" id="join-error">${esc(error)}</p><button class="primary" type="submit">Enter</button></form>
+<form id="join" novalidate><label>Code<input name="code" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required></label><label>TikTok username<input name="username" placeholder="@yourname" autocomplete="off" autocapitalize="none" spellcheck="false"></label><label>Email <span class="muted">(first time: your code is mailed here)</span><input name="email" type="email" placeholder="you@mail.com" autocomplete="email" autocapitalize="none" spellcheck="false"></label><p class="hint muted">First time? Use the clipper code, your TikTok username and your email: your own code comes by mail. After that, your own code is all you need.</p><p class="error" id="join-error">${esc(error)}</p><button class="primary" type="submit">Enter</button></form>
 <p class="muted">Your public TikTok profile is read once a day: followers, likes, views and when you last posted. Nothing is posted or changed.</p></section>`;

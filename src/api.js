@@ -2,6 +2,7 @@ import { supabaseUrl, supabaseAnonKey } from './config.js';
 const url = supabaseUrl.replace(/\/$/, '') + '/functions/v1/clippers';
 const text = {
   bad_code: 'Wrong code.',
+  bad_email: 'That email does not look right.',
   bad_username: 'Type your TikTok username (letters, numbers, _ and . only).',
   taken: 'That TikTok username already joined. Log in with your game code instead (or DM willll0838 on Discord).',
   removed: 'This account was removed. DM willll0838 on Discord.',
