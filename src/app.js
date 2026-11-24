@@ -78,6 +78,10 @@ main.addEventListener('click', async e => {
   else if (a === 'welcome') act(b, 'owner.welcome', { username: user }, 'Code mail sent again.');
   else if (a === 'approve') act(b, 'owner.approve', { username: user }, `@${user} approved. Code mail sent.`);
   else if (a === 'reject') { if (confirm(`Reject @${user}?`)) act(b, 'owner.reject', { username: user }, `@${user} rejected.`); }
+  else if (a === 'ig-set') {
+    const typed = prompt(`Instagram username for @${user} (empty to remove):`, b.dataset.ig || '');
+    if (typed !== null) act(b, 'owner.instagram', { username: user, instagram: typed }, typed.trim() ? 'Instagram saved. The next daily scan reads it.' : 'Instagram removed.');
+  }
   else if (a === 'remove') { if (confirm(`Remove @${user}? Their game code stops working and they cannot join again.`)) act(b, 'owner.remove', { username: user }, `@${user} removed.`); }
 });
 
@@ -87,6 +91,10 @@ main.addEventListener('submit', async e => {
     e.preventDefault();
     const until = new Date(f.elements.until.value + 'T23:59:59');
     act(f.querySelector('button'), 'reason', { reason: f.elements.reason.value, until: until.toISOString() }, 'Reason sent. The 3-day rule waits until then.');
+  } else if (f.id === 'instagram') {
+    e.preventDefault();
+    const typed = f.elements.instagram.value;
+    act(f.querySelector('button'), 'instagram', { instagram: typed }, typed.trim() ? 'Instagram saved. The next daily scan reads it.' : 'Instagram removed.');
   } else if (f.id === 'event-form') {
     e.preventDefault();
     const iso = v => (v ? new Date(v).toISOString() : null);

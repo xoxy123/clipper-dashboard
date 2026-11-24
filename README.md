@@ -3,6 +3,11 @@
 Dashboard for Shredbound's TikTok clippers, published on GitHub Pages at
 `https://xoxy123.github.io/clipper-dashboard/`.
 
+
+## Daily scan (on Supabase, since 2026-11-23)
+
+The scan no longer needs Claude, a browser or the Mac. pg_cron job `clipper-daily-scan` posts `{action:"cron.scan"}` to the `clippers` function every day at 17:00 UTC with `x-cron-secret` (`clipper_config.scan_cron_secret`); see `supabase/migrations/0006_server_scan.sql`. For each approved clipper the function reads the public TikTok profile page (followers, likes, video count) and the TikTok embed page (the 10 newest videos with play counts; a video id holds its upload time), plus the Instagram profile embed when the clipper gave an Instagram username (followers, posts, the 6 newest posts with likes; Instagram answers it only to a phone user agent and shows no view counts). Parsers and the running view/like totals are in `supabase/functions/clippers/scan.js`. A post on Instagram counts for the 3-day rule like a TikTok. The rule runs only on complete readings: a failed TikTok (or Instagram, when given) reading never takes a code. Clippers set their Instagram in My account; the owner can set it in the Clippers tab. `scripts/clippers.mjs` and `scripts/tiktok-extract.js` (the old browser scan) still work as a manual fallback.
+
 ## Logging in
 
 One code field (plus the TikTok username for a first join):

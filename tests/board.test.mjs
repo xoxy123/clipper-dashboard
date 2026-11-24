@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { summarize, boardFor, cleanUsername } from '../supabase/functions/clippers/board.js';
-import { boards, myAccount, chart, num, signed, ordinal, events, clippersAdmin, gameAccess, eventPhase, rel, left, joinForm } from '../src/view.js';
+import { boards, myAccount, chart, num, signed, ordinal, events, clippersAdmin, gameAccess, eventPhase, rel, left, joinForm, instagramBlock } from '../src/view.js';
 
 const acc = u => ({ username: u, joined_at: '2026-11-01T00:00:00Z' });
 const snap = (u, day, views, followers = 0, ok = true) => ({ username: u, taken_at: `2026-11-${String(day).padStart(2, '0')}T18:00:00Z`, ok, error: ok ? null : 'private', followers, likes: views / 10, videos: 5, views });
@@ -176,4 +176,20 @@ test('applications tab: approve or reject who applied', () => {
   assert.match(html, /1 waiting/);
   assert.match(html, /data-act="approve" data-user="new_one"/);
   assert.match(html, /Rejected \(1\)/);
+});
+
+test('Instagram: a form until a username is given, then its numbers; owner sees it per clipper', () => {
+  const now = Date.parse('2026-11-24T03:00:00Z');
+  assert.match(instagramBlock({ handle: null }, now), /id="instagram"/);
+  const ig = { handle: 'shred_ig', error: null, latest: { takenAt: '2026-11-24T02:30:00Z', followers: 820, posts: 111, likes: 2834, lastPostAt: '2026-11-23T08:02:19Z' }, previous: null, gained: null };
+  const html = instagramBlock(ig, now);
+  assert.match(html, /@shred_ig/);
+  assert.match(html, /2,834/);
+  assert.match(html, /19 hours ago/);
+  assert.match(instagramBlock({ ...ig, error: 'private', latest: null }, now), /private/);
+  const row = { username: 'a', instagram: ig, access: { status: 'active', code: '1', dueAt: '2026-11-26T00:00:00Z', excusedUntil: null, reason: null, lastVideoAt: null, lastPlayedAt: null, devices: 0 }, reasons: [] };
+  const admin = clippersAdmin([row], now);
+  assert.match(admin, /<th>Instagram<\/th>/);
+  assert.match(admin, /@shred_ig/);
+  assert.match(admin, /data-act="ig-set"/);
 });

@@ -97,3 +97,8 @@ table.admin .actions{display:flex;flex-direction:column;align-items:flex-start;g
 @media (max-width:520px){.two{grid-template-columns:1fr}.status{text-align:left}nav#tabs{gap:18px}}
 main>*{min-width:0}
 .primary.small{padding:6px 12px;font-size:13px;margin-bottom:4px}
+
+/* Instagram username form in My account. */
+.inline-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin: 12px 0; }
+.inline-form label { flex: 1 1 220px; display: grid; gap: 6px; font: 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.inline-form input { width: 100%; border: 1px solid var(--line); background: #0e0b08; color: var(--text); padding: 10px 12px; font: 15px var(--sans); letter-spacing: 0; text-transform: none; border-radius: 4px; }

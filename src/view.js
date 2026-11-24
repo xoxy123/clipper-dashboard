@@ -26,6 +26,7 @@ export function left(iso, now = Date.now()) {
 }
 
 const profile = u => `https://www.tiktok.com/@${encodeURIComponent(u)}`;
+const igProfile = u => `https://www.instagram.com/${encodeURIComponent(u)}/`;
 export const APPEAL = 'To appeal, DM <b>willll0838</b> on Discord or mail <a href="mailto:shredboundofficial@gmail.com">shredboundofficial@gmail.com</a>.';
 
 // ------------------------------------------------------------------ frame
@@ -91,7 +92,7 @@ export function gameAccess(a, now = Date.now()) {
   return `<article class="card access ${cls}"><div class="access-top"><div><p class="eyebrow">Game access code</p><p class="code" id="game-code">${esc(a.code || '—')}</p><button class="chip-button" data-act="copy" data-copy="${esc(a.code || '')}">Copy code</button></div><div class="status ${cls}"><b>${word}</b><span>${line}</span></div></div>
 ${blocked ? `<p class="appeal">${APPEAL}</p>` : rule}
 <dl class="facts"><div><dt>Last video</dt><dd>${a.lastVideoAt ? `${rel(a.lastVideoAt, now)}` : 'none seen yet'}</dd></div><div><dt>Last played</dt><dd>${a.lastPlayedAt ? rel(a.lastPlayedAt, now) : 'not yet'}</dd></div></dl>
-<p class="rulebox"><b>The rule:</b> post a TikTok at least every 3 days. If you play Shredbound and haven't posted for 3 days, your code stops working. Not playing at all? Then you're fine.</p>
+<p class="rulebox"><b>The rule:</b> post a TikTok (or an Instagram post or reel, once you add your Instagram below) at least every 3 days. If you play Shredbound and haven't posted for 3 days, your code stops working. Not playing at all? Then you're fine.</p>
 ${reason}</article>`;
 }
 const isoDay = t => new Date(t - new Date(t).getTimezoneOffset() * 60e3).toISOString().slice(0, 10);
@@ -109,7 +110,33 @@ ${chart(m.history)}`
 ${gameAccess(m.access, now)}
 <h2 class="sub">TikTok</h2>
 <div class="ranks">${rank(m.viewsRank, m.viewsRanked, 'Most views')}${rank(m.improvedRank, m.improvedRanked, 'Most improved')}</div>
-${m.lastError ? `<p class="note error">${esc(scanError[m.lastError] || scanError.no_data)}</p>` : ''}${body}</section>`;
+${m.lastError ? `<p class="note error">${esc(scanError[m.lastError] || scanError.no_data)}</p>` : ''}${body}
+${instagramBlock(m.instagram, now)}</section>`;
+}
+
+const igError = {
+  not_found: "Instagram couldn't find this username. Check it below.",
+  private: 'Your Instagram is private, so it cannot be read. Make it public to count.',
+  no_data: "Instagram didn't answer the last scan. It tries again tomorrow.",
+  blocked: "Instagram didn't answer the last scan. It tries again tomorrow.",
+};
+
+// Instagram counts like TikTok for the 3-day rule. Instagram shows no views
+// without a login, so the numbers are followers, posts and likes.
+export function instagramBlock(ig, now = Date.now()) {
+  if (!ig) return '';
+  const form = `<form id="instagram" class="inline-form"><label>Instagram username<input name="instagram" value="${esc(ig.handle || '')}" placeholder="your_instagram" autocapitalize="none" autocomplete="off" spellcheck="false" maxlength="60"></label><button class="primary" type="submit">${ig.handle ? 'Save' : 'Add'}</button></form>`;
+  if (!ig.handle) {
+    return `<h2 class="sub">Instagram</h2><p class="note">Post your clips on Instagram too? Add your username. Your posts and reels there count for the 3-day rule, and your numbers show here.</p>${form}`;
+  }
+  const l = ig.latest, g = ig.gained;
+  const body = l
+    ? `<div class="stats">${stat('Followers', l.followers, g?.followers)}${stat('Posts', l.posts, g?.posts)}${stat('Likes', l.likes, g?.likes)}</div>
+<p class="note">Last post ${l.lastPostAt ? rel(l.lastPostAt, now) : 'none seen yet'}. Likes are counted on the posts the daily scan sees; Instagram shows no views without a login.</p>`
+    : '<p class="note">Your Instagram numbers appear after the next daily scan.</p>';
+  return `<h2 class="sub">Instagram <a class="eyebrow handle" href="${igProfile(ig.handle)}" target="_blank" rel="noopener">@${esc(ig.handle)} ↗</a></h2>
+${ig.error ? `<p class="note error">${esc(igError[ig.error] || igError.no_data)}</p>` : ''}${body}
+<details class="reason-form"><summary>Change or remove your Instagram</summary>${form}<p class="muted">Leave it empty and save to remove it.</p></details>`;
 }
 
 // Total views at each scan, one line. Needs two points.
@@ -175,6 +202,14 @@ const statusCell = a => {
   return `<span class="pill ${a.status === 'removed' ? 'ended' : cls}">${a.status === 'removed' ? 'Removed' : word}</span>`;
 };
 
+const igCell = (c, now) => {
+  const ig = c.instagram || {};
+  const set = c.removedAt ? '' : `<br><button class="text-button" data-act="ig-set" data-user="${esc(c.username)}" data-ig="${esc(ig.handle || '')}">${ig.handle ? 'Change' : 'Add'}</button>`;
+  if (!ig.handle) return `<span class="muted">—</span>${set}`;
+  const state = ig.error ? `<small class="warn-text">${esc(ig.error.replace('_', ' '))}</small>` : ig.latest?.lastPostAt ? `<small class="muted">posted ${rel(ig.latest.lastPostAt, now)}</small>` : '<small class="muted">not scanned yet</small>';
+  return `<a href="${igProfile(ig.handle)}" target="_blank" rel="noopener">@${esc(ig.handle)}</a><br>${state}${set}`;
+};
+
 export function clippersAdmin(list, now = Date.now()) {
   const live = list.filter(c => !c.removedAt), removed = list.filter(c => c.removedAt);
   const lost = live.filter(c => c.access.status === 'lost').length;
@@ -188,14 +223,15 @@ export function clippersAdmin(list, now = Date.now()) {
       `<button class="text-button danger" data-act="remove" data-user="${esc(c.username)}">Remove</button>`,
     ].join('');
     return `<tr><td><a href="${profile(c.username)}" target="_blank" rel="noopener">@${esc(c.username)}</a>${c.email ? `<br><small class="muted">${esc(c.email)}</small>` : ''}${c.welcome ? `<br><small class="${c.welcome === 'sent' ? 'ok-text' : 'warn-text'}">code mail: ${esc(c.welcome)}</small>` : ''}${c.lastScanError ? `<br><small class="error">scan: ${esc(c.lastScanError)}</small>` : ''}</td>
+<td>${igCell(c, now)}</td>
 <td class="mono">${esc(a.code || '—')}</td><td>${statusCell(c.removedAt ? { status: 'removed' } : a)}</td>
 <td>${a.lastVideoAt ? rel(a.lastVideoAt, now) : 'none'}</td><td>${a.lastPlayedAt ? rel(a.lastPlayedAt, now) : 'never'}</td><td>${due}</td>
 <td class="reason-cell">${r ? `${esc(r.reason)}<br><small class="muted">until ${esc(date(r.until))}</small>` : '—'}</td>
 <td class="n">${a.devices}</td><td class="actions">${acts}</td></tr>`;
   };
   return `<section aria-labelledby="cl"><div class="section-head"><h1 id="cl">Clippers</h1><span class="eyebrow">${live.length} active · ${lost} lost access</span></div>
-<p class="note">Everyone joins with the clipper code and gets their own game code. The daily scan takes the game code of anyone who played without posting for 3 days, unless they gave a reason.</p>
-${live.length ? `<div class="scroll"><table class="admin"><thead><tr><th>Clipper</th><th>Game code</th><th>Status</th><th>Last video</th><th>Last played</th><th>Next video due</th><th>Reason</th><th class="n">Devices</th><th></th></tr></thead><tbody>${live.map(row).join('')}</tbody></table></div>` : '<p class="empty">Nobody has joined yet.</p>'}
+<p class="note">Everyone joins with the clipper code and gets their own game code. The daily scan (on Supabase, every day at 17:00 UTC) reads their TikTok and Instagram and takes the game code of anyone who played without posting on either for 3 days, unless they gave a reason.</p>
+${live.length ? `<div class="scroll"><table class="admin"><thead><tr><th>Clipper</th><th>Instagram</th><th>Game code</th><th>Status</th><th>Last video</th><th>Last played</th><th>Next video due</th><th>Reason</th><th class="n">Devices</th><th></th></tr></thead><tbody>${live.map(row).join('')}</tbody></table></div>` : '<p class="empty">Nobody has joined yet.</p>'}
 ${removed.length ? `<details class="all"><summary>Removed (${removed.length})</summary><div class="scroll"><table class="admin"><tbody>${removed.map(row).join('')}</tbody></table></div></details>` : ''}</section>`;
 }
 
@@ -243,4 +279,4 @@ ${rejected.length ? `<details class="all"><summary>Rejected (${rejected.length})
 
 export const joinForm = (error = '') => `<section class="join" aria-labelledby="join-title"><div><p class="eyebrow">Shredbound clippers</p><h1 id="join-title">Clipper dashboard</h1></div>
 <form id="join" novalidate><label>Your code <span class="muted">(leave empty to apply)</span><input name="code" type="password" autocomplete="off" autocapitalize="none" spellcheck="false"></label><label>TikTok username<input name="username" placeholder="@yourname" autocomplete="off" autocapitalize="none" spellcheck="false"></label><label>Email <span class="muted">(first time: we mail you when you're approved)</span><input name="email" type="email" placeholder="you@mail.com" autocomplete="email" autocapitalize="none" spellcheck="false"></label><p class="hint muted">First time? Leave the code empty and apply with your TikTok username and your email. When you're approved, your own code comes by mail, and that code is all you need after that.</p><p class="error" id="join-error">${esc(error)}</p><button class="primary" type="submit">Enter</button></form>
-<p class="muted">Your public TikTok profile is read once a day: followers, likes, views and when you last posted. Nothing is posted or changed.</p></section>`;
+<p class="muted">Your public TikTok profile (and Instagram, if you add it) is read once a day: followers, likes, views and when you last posted. Nothing is posted or changed.</p></section>`;
