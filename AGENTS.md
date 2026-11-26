@@ -96,13 +96,15 @@ shredboundofficial@gmail.com TO APPEAL." Appeal: the owner presses Give access b
 
 The rule runs only inside `admin.record`, on fresh readings. A failed scan never takes access.
 
-## Daily scan
+## Scan
 
-A Claude desktop scheduled task, "Clipper daily TikTok scan" (id `clipper-weekly-scan`), runs
-about 18:06 every day. It:
-1. lists the clippers with `scripts/clippers.mjs list`;
-2. opens each `tiktok.com/@user` in a browser and runs `scripts/tiktok-extract.js`;
-3. records the readings with `scripts/clippers.mjs record`.
+Since 2026-11-23 the scan runs on Supabase itself (pg_cron, `cron.scan` in `index.ts`, parsers in
+`scan.js`); since 2026-11-26 every 2 hours for readings and once a day (17:00 UTC) for the 3-day
+rule. See README.md, "Scan". It reads `clipper_accounts.tiktok` when set (a clipper whose TikTok
+username was typed wrong), else the username. Every post seen is kept in `clipper_videos` with its
+own views, likes, comments, shares and saves; the owner's clipper profile (`#clipper/<username>`,
+action `profile`) shows them. The old Claude desktop task `clipper-weekly-scan` is paused; keep it
+only as a manual fallback.
 
 ## Unfinished: William asked for it on 2026-11-18, then paused it
 

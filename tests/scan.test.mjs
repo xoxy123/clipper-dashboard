@@ -69,3 +69,43 @@ test('Instagram usernames are cleaned like TikTok ones', () => {
   assert.equal(cleanInstagram('bad name'), null);
   assert.equal(cleanInstagram(''), null);
 });
+
+import { parseTikTokVideo, detailDue, isShredbound } from '../supabase/functions/clippers/scan.js';
+
+test('a TikTok post page gives its views, likes, comments, shares, saves and length', () => {
+  const item = { id: '7710681094630247702', desc: 'Rail sesh in  Shredbound\n#shredbound', createTime: 1795282879,
+    stats: { playCount: 784, diggCount: 5, commentCount: 0, shareCount: 1, collectCount: 2 },
+    statsV2: { playCount: '3000000000', diggCount: '5', commentCount: '0', shareCount: '1', collectCount: '2' }, video: { duration: 18 } };
+  const r = parseTikTokVideo(script('__UNIVERSAL_DATA_FOR_REHYDRATION__', { __DEFAULT_SCOPE__: { 'webapp.video-detail': { statusCode: 0, itemInfo: { itemStruct: item } } } }));
+  assert.equal(r.ok, true);
+  assert.equal(r.views, 3000000000, 'statsV2 is exact past 2^31');
+  assert.deepEqual([r.likes, r.comments, r.shares, r.saves, r.durationS, r.kind], [5, 0, 1, 2, 18, 'video']);
+  assert.equal(r.caption, 'Rail sesh in Shredbound #shredbound');
+  const photo = parseTikTokVideo(script('__UNIVERSAL_DATA_FOR_REHYDRATION__', { __DEFAULT_SCOPE__: { 'webapp.video-detail': { itemInfo: { itemStruct: { ...item, imagePost: { images: [] } } } } } }));
+  assert.equal(photo.kind, 'photo');
+  assert.equal(parseTikTokVideo(script('__UNIVERSAL_DATA_FOR_REHYDRATION__', { __DEFAULT_SCOPE__: { 'webapp.video-detail': { statusCode: 10204 } } })).error, 'not_found');
+  assert.equal(parseTikTokVideo('<html>captcha</html>').error, 'blocked');
+});
+
+test('the embed and Instagram give each post its caption; Instagram its comments', () => {
+  const page = { userInfo: {}, videoList: [{ id: '7711063988712394006', playCount: 272, desc: 'shrebounds has got some New updates #shredbound @Shredbound ' }] };
+  const r = parseTikTokEmbed(script('__FRONTITY_CONNECT_STATE__', { source: { data: { '/embed/@real.handle': page } } }), 'real.handle');
+  assert.equal(r.items[0].caption, 'shrebounds has got some New updates #shredbound @Shredbound');
+  const ctx = { context: { username: 'x', graphql_media: [{ shortcode_media: { shortcode: 'DgAB1nPPINp', is_video: true, taken_at_timestamp: 1795430158, edge_liked_by: { count: 42 }, edge_media_to_comment: { count: 1 }, edge_media_to_caption: { edges: [{ node: { text: '@shredbound.game best game ever' } }] } } }] } };
+  const ig = parseInstagramEmbed(`<script>{"contextJSON":${JSON.stringify(JSON.stringify(ctx))}}</script>`, 'x');
+  assert.deepEqual([ig.items[0].value, ig.items[0].comments, ig.items[0].kind, ig.items[0].caption], [42, 1, 'video', '@shredbound.game best game ever']);
+});
+
+test('a post page is read when new, every 2 hours while fresh, then daily', () => {
+  const now = Date.parse('2026-11-26T08:00:00Z');
+  assert.equal(detailDue({ detailAt: null, postedAt: null }, now), true);
+  assert.equal(detailDue({ detailAt: '2026-11-26T07:00:00Z', postedAt: '2026-11-25T00:00:00Z' }, now), false, 'fresh, read an hour ago');
+  assert.equal(detailDue({ detailAt: '2026-11-26T06:10:00Z', postedAt: '2026-11-25T00:00:00Z' }, now), true, 'fresh, read 110 minutes ago');
+  assert.equal(detailDue({ detailAt: '2026-11-25T13:00:00Z', postedAt: '2026-10-01T00:00:00Z' }, now), false, 'old, read 19 hours ago');
+  assert.equal(detailDue({ detailAt: '2026-11-25T11:00:00Z', postedAt: '2026-10-01T00:00:00Z' }, now), true, 'old, read 21 hours ago');
+});
+
+test('a Shredbound clip is one whose caption names the game', () => {
+  for (const c of ['#shredbound', 'Rail sesh in Shredbound', '@shredbound.official', 'shrebounds has got some New updates']) assert.equal(isShredbound(c), true, c);
+  for (const c of ['#shredsauce #cork7', 'aleksib #goat', '', null]) assert.equal(isShredbound(c), false, String(c));
+});

@@ -193,3 +193,76 @@ test('Instagram: a form until a username is given, then its numbers; owner sees 
   assert.match(admin, /@shred_ig/);
   assert.match(admin, /data-act="ig-set"/);
 });
+
+import { daily, postView, postStats } from '../supabase/functions/clippers/board.js';
+import { clipperProfile, postsTables, profileHash } from '../src/view.js';
+
+test('charts take the last reading of each day', () => {
+  const at = t => ({ taken_at: t, views: 1 });
+  const newestFirst = [at('2026-11-25T18:30:00Z'), at('2026-11-25T17:00:00Z'), at('2026-11-24T17:00:00Z'), at('2026-11-24T02:26:00Z'), at('2026-11-23T10:00:00Z')];
+  assert.deepEqual(daily(newestFirst).map(s => s.taken_at), ['2026-11-23T10:00:00Z', '2026-11-24T17:00:00Z', '2026-11-25T18:30:00Z']);
+  assert.equal(daily(newestFirst, 2).length, 2);
+});
+
+const tt = (id, posted, views, more = {}) => ({ platform: 'tiktok', video_id: id, username: 'lewat3r', handle: 'real.handle', posted_at: posted, value: views, views, caption: null, ...more });
+test('posts: links, numbers and what they add up to since joining', () => {
+  const rows = [
+    tt('7711063988712394006', '2026-11-22T18:26:31Z', 272, { caption: '#shredbound new updates', likes: 20, comments: 3, shares: 1, saves: 2 }),
+    tt('7708498749219278082', '2026-11-15T07:00:00Z', 298, { caption: '#shredbound Cork 7', likes: 10 }),
+    tt('7704035071346396438', '2026-11-03T00:00:00Z', 2862, { caption: 'aleksib #goat', views: null }),
+    { platform: 'instagram', video_id: 'DgAB1nPPINp', username: 'lewat3r', handle: 'some_ig', posted_at: '2026-11-21T10:35:58Z', value: 42, likes: null, comments: 1, caption: '@shredbound.game best game ever' },
+  ];
+  const posts = rows.map(postView);
+  assert.equal(posts[0].url, 'https://www.tiktok.com/@real.handle/video/7711063988712394006');
+  assert.equal(posts[3].url, 'https://www.instagram.com/p/DgAB1nPPINp/');
+  assert.equal(posts[2].views, 2862, 'an older row without views uses the count it was read with');
+  assert.equal(posts[3].likes, 42, 'an Instagram row without likes uses its value');
+  assert.equal(posts[3].views, null);
+  const st = postStats(posts, '2026-11-19T21:19:19Z');
+  assert.deepEqual([st.posts, st.sinceJoining, st.shredbound, st.shredboundSinceJoining], [4, 2, 3, 2]);
+  assert.deepEqual([st.views, st.viewsSinceJoining, st.shredboundViews, st.averageViews], [272 + 298 + 2862, 272, 272 + 298, Math.round((272 + 298 + 2862) / 3)]);
+  assert.equal(st.likes, 20 + 10 + 42);
+  assert.equal(st.best.views, 2862);
+  assert.equal(st.lastPostAt, '2026-11-22T18:26:31Z');
+  const html = postsTables(posts, '2026-11-19T21:19:19Z', Date.parse('2026-11-26T08:00:00Z'));
+  assert.match(html, /Before joining \(2\)/);
+  assert.match(html, /class="tag">Shredbound/);
+  assert.match(html, />8\.8%</, 'engagement (20 + 3 + 1) / 272');
+  assert.doesNotMatch(html, /0\.0%/, 'no engagement before the post page is read');
+  assert.doesNotMatch(html, /undefined|NaN/);
+});
+
+test('a clipper profile shows their status, numbers and posts, and says when the TikTok is wrong', () => {
+  const now = Date.parse('2026-11-26T08:00:00Z');
+  const posts = [postView(tt('7711063988712394006', '2026-11-22T18:26:31Z', 272, { caption: '#shredbound', likes: 20 }))];
+  const p = {
+    username: 'lewat3r', tiktok: 'real.handle', email: 'x@y.z', joinedAt: '2026-11-19T21:19:19Z',
+    access: { status: 'active', code: '1', dueAt: '2026-11-29T08:00:00Z', lastVideoAt: '2026-11-22T18:26:31Z', lastPlayedAt: '2026-11-24T11:52:47Z', devices: 1, playSeconds: 17630, reason: null, excusedUntil: null },
+    tiktokStats: { lastError: null, lastReadAt: '2026-11-26T07:30:00Z', latest: { views: 7000, followers: 438, likes: 570, videos: 15 }, gained: null, history: [] },
+    instagram: { handle: null }, stats: postStats(posts, '2026-11-19T21:19:19Z'), posts,
+  };
+  const html = clipperProfile(p, now);
+  assert.match(html, /@lewat3r/);
+  assert.match(html, /TikTok @real\.handle/);
+  assert.match(html, /data-act="scan-now" data-user="lewat3r"/);
+  assert.match(html, /data-act="tiktok-set"/);
+  assert.match(html, /7,000/);
+  assert.match(html, /4.9 h on 1 device/);
+  assert.match(html, /x@y\.z/);
+  assert.doesNotMatch(html, /undefined|NaN|class="alert"/);
+  const wrong = clipperProfile({ ...p, tiktok: 'lewat3r', tiktokStats: { ...p.tiktokStats, lastError: 'not_found', latest: null } }, now);
+  assert.match(wrong, /class="alert">TikTok has no profile <b>@lewat3r<\/b>/);
+  assert.equal(profileHash('leo.bormns'), '#clipper/leo.bormns');
+});
+
+test('the owner reaches a profile from the clippers table and the leaderboard; a wrong TikTok can be fixed there', () => {
+  const now = Date.parse('2026-11-26T08:00:00Z');
+  const access = { code: '1', status: 'active', lastVideoAt: null, lastPlayedAt: null, dueAt: '2026-11-22T21:19:19Z', excusedUntil: null, reason: null, devices: 1 };
+  const html = clippersAdmin([{ username: 'lewat3r', tiktok: 'lewat3r', access, removedAt: null, lastScanError: 'not_found', views: null, stats: { sinceJoining: 0, shredboundSinceJoining: 0 } }], now);
+  assert.match(html, /href="#clipper\/lewat3r"/);
+  assert.match(html, /TikTok has no @lewat3r/);
+  assert.match(html, /data-act="tiktok-set" data-user="lewat3r"/);
+  const board = { lastScan: null, total: 1, topViews: [{ username: 'powwdurr', handle: 'powwdurr', views: 44495 }], topImproved: [], viewsBoard: [], improvedBoard: [] };
+  assert.match(boards(board, '', true), /href="#clipper\/powwdurr"/);
+  assert.match(boards(board, ''), /href="https:\/\/www\.tiktok\.com\/@powwdurr"/);
+});

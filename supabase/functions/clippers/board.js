@@ -23,6 +23,7 @@ export function summarize(accounts, snapshots) {
     const prev = latest ? good.find(s => Date.parse(latest.taken_at) - Date.parse(s.taken_at) >= MIN_GAP_DAYS * DAY) || null : null;
     rows.push({
       username: a.username,
+      handle: a.tiktok || a.username,
       joinedAt: a.joined_at,
       lastError: all[0] && !all[0].ok ? all[0].error || 'no_data' : null,
       latest: latest && pick(latest),
@@ -33,7 +34,7 @@ export function summarize(accounts, snapshots) {
         likes: diff(latest.likes, prev.likes),
         videos: diff(latest.videos, prev.videos),
       } : null,
-      history: good.slice(0, 12).reverse().map(pick),
+      history: daily(good, HISTORY_DAYS).map(pick),
     });
   }
   const views = rows.filter(r => r.latest?.views != null)
@@ -50,7 +51,22 @@ function pick(s) {
   return { takenAt: s.taken_at, followers: s.followers, likes: s.likes, videos: s.videos, views: s.views };
 }
 
-const brief = r => ({ username: r.username, views: r.latest?.views ?? null, gained: r.gained?.views ?? null, followersGained: r.gained?.followers ?? null });
+// The scan reads every 2 hours, so a chart takes the last reading of each UTC
+// day: newest-first readings in, oldest-first days out, at most `days` of them.
+export const HISTORY_DAYS = 60;
+export function daily(newestFirst, days = HISTORY_DAYS) {
+  const out = [], seen = new Set();
+  for (const s of newestFirst) {
+    const day = new Date(s.taken_at).toISOString().slice(0, 10);
+    if (seen.has(day)) continue;
+    seen.add(day);
+    out.push(s);
+    if (out.length >= days) break;
+  }
+  return out.reverse();
+}
+
+const brief = r => ({ username: r.username, handle: r.handle, views: r.latest?.views ?? null, gained: r.gained?.views ?? null, followersGained: r.gained?.followers ?? null });
 
 // What one clipper sees: both top-3 boards, everyone's place, and their own account.
 export function boardFor(username, summary) {
@@ -64,6 +80,7 @@ export function boardFor(username, summary) {
     improvedBoard: summary.improved.map(brief),
     me: me && {
       username: me.username,
+      handle: me.handle,
       joinedAt: me.joinedAt,
       lastError: me.lastError,
       latest: me.latest,
@@ -129,4 +146,67 @@ export function accessStatus(code, removedAt) {
   if (!code) return 'none';
   if (!code.revoked_at) return 'active';
   return code.revoked_reason === 'inactive' ? 'lost' : 'taken';
+}
+
+// ------------------------------------------------------------------ posts
+
+const SHREDBOUND = /shre?d?bound/i;
+
+/** One stored post (a clipper_videos row) as the dashboard shows it. */
+export function postView(r) {
+  const tiktok = r.platform === 'tiktok';
+  const handle = r.handle || r.username;
+  const views = r.views ?? (tiktok ? r.value : null);
+  const likes = r.likes ?? (tiktok ? null : r.value);
+  return {
+    platform: r.platform,
+    id: r.video_id,
+    url: tiktok ? `https://www.tiktok.com/@${handle}/${r.kind === 'photo' ? 'photo' : 'video'}/${r.video_id}` : `https://www.instagram.com/p/${r.video_id}/`,
+    postedAt: r.posted_at ?? null,
+    caption: r.caption ?? null,
+    shredbound: SHREDBOUND.test(r.caption ?? ''),
+    kind: r.kind ?? null,
+    views: views == null ? null : Number(views),
+    likes: likes == null ? null : Number(likes),
+    comments: r.comments == null ? null : Number(r.comments),
+    shares: r.shares == null ? null : Number(r.shares),
+    saves: r.saves == null ? null : Number(r.saves),
+    durationS: r.duration_s ?? null,
+    readAt: r.detail_at ?? r.updated_at ?? null,
+  };
+}
+
+/**
+ * What a clipper's posts add up to. Views are TikTok's (Instagram shows none
+ * without a login); likes and comments count both platforms. "Since joining"
+ * is what they posted as a clipper; "Shredbound" is a post whose caption names
+ * the game.
+ */
+export function postStats(posts, joinedAt) {
+  const since = joinedAt ? Date.parse(joinedAt) : null;
+  const sum = (list, k) => list.reduce((s, p) => s + (Number(p[k]) || 0), 0);
+  const withViews = posts.filter(p => p.views != null);
+  const mine = posts.filter(p => since != null && p.postedAt && Date.parse(p.postedAt) >= since);
+  const sb = posts.filter(p => p.shredbound);
+  const newest = list => list.reduce((m, p) => (p.postedAt && (!m || p.postedAt > m) ? p.postedAt : m), null);
+  const best = withViews.reduce((b, p) => (!b || p.views > b.views ? p : b), null);
+  return {
+    posts: posts.length,
+    tiktok: posts.filter(p => p.platform === 'tiktok').length,
+    instagram: posts.filter(p => p.platform === 'instagram').length,
+    sinceJoining: mine.length,
+    shredbound: sb.length,
+    shredboundSinceJoining: sb.filter(p => mine.includes(p)).length,
+    views: sum(withViews, 'views'),
+    viewsSinceJoining: sum(mine.filter(p => p.views != null), 'views'),
+    shredboundViews: sum(sb.filter(p => p.views != null), 'views'),
+    likes: sum(posts, 'likes'),
+    comments: sum(posts, 'comments'),
+    shares: sum(posts, 'shares'),
+    saves: sum(posts, 'saves'),
+    averageViews: withViews.length ? Math.round(sum(withViews, 'views') / withViews.length) : null,
+    best: best && { url: best.url, views: best.views, postedAt: best.postedAt, caption: best.caption },
+    lastPostAt: newest(posts),
+    lastShredboundAt: newest(sb),
+  };
 }

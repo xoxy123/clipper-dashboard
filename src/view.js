@@ -27,6 +27,13 @@ export function left(iso, now = Date.now()) {
 
 const profile = u => `https://www.tiktok.com/@${encodeURIComponent(u)}`;
 const igProfile = u => `https://www.instagram.com/${encodeURIComponent(u)}/`;
+// The owner opens a clipper's profile in the dashboard; a clipper opens the TikTok profile.
+export const profileHash = u => `#clipper/${encodeURIComponent(u)}`;
+const nameLink = (r, owner) => owner
+  ? `<a href="${profileHash(r.username)}">@${esc(r.username)}</a>`
+  : `<a href="${profile(r.handle || r.username)}" target="_blank" rel="noopener">@${esc(r.username)}</a>`;
+export const pct = v => (v == null || !Number.isFinite(v) ? '—' : `${(v * 100).toFixed(v >= 0.1 ? 0 : 1)}%`);
+export const length = s => (s == null ? '—' : s >= 60 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : `${s}s`);
 export const APPEAL = 'To appeal, DM <b>willll0838</b> on Discord or mail <a href="mailto:shredboundofficial@gmail.com">shredboundofficial@gmail.com</a>.';
 
 // ------------------------------------------------------------------ frame
@@ -36,24 +43,24 @@ export const nav = (role, current) => TABS[role].map(([id, label]) => `<a href="
 
 // ------------------------------------------------------------------ leaderboard
 
-function podium(rows, me, value, sub) {
+function podium(rows, me, value, sub, owner) {
   if (!rows.length) return '';
-  return `<ol class="podium">${rows.map((r, i) => `<li class="p${i + 1}${r.username === me ? ' me' : ''}"><span class="place">${i + 1}</span><span class="name"><a href="${profile(r.username)}" target="_blank" rel="noopener">@${esc(r.username)}</a>${r.username === me ? ' <span class="muted">(you)</span>' : ''}</span><span class="value">${value(r)}<small>${sub(r)}</small></span></li>`).join('')}</ol>`;
+  return `<ol class="podium">${rows.map((r, i) => `<li class="p${i + 1}${r.username === me ? ' me' : ''}"><span class="place">${i + 1}</span><span class="name">${nameLink(r, owner)}${r.username === me ? ' <span class="muted">(you)</span>' : ''}</span><span class="value">${value(r)}<small>${sub(r)}</small></span></li>`).join('')}</ol>`;
 }
 
-function fullTable(rows, me, cols) {
+function fullTable(rows, me, cols, owner) {
   if (rows.length <= 3) return '';
-  return `<details class="all"><summary>Show all ${rows.length}</summary><div class="scroll"><table><thead><tr><th>#</th><th>Clipper</th>${cols.map(c => `<th class="n">${c[0]}</th>`).join('')}</tr></thead><tbody>${rows.map((r, i) => `<tr${r.username === me ? ' class="me"' : ''}><td>${i + 1}</td><td>@${esc(r.username)}</td>${cols.map(c => `<td class="n">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
+  return `<details class="all"><summary>Show all ${rows.length}</summary><div class="scroll"><table><thead><tr><th>#</th><th>Clipper</th>${cols.map(c => `<th class="n">${c[0]}</th>`).join('')}</tr></thead><tbody>${rows.map((r, i) => `<tr${r.username === me ? ' class="me"' : ''}><td>${i + 1}</td><td>${nameLink(r, owner)}</td>${cols.map(c => `<td class="n">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
 }
 
-export function boards(b, me = '') {
-  const views = podium(b.topViews, me, r => num(r.views), () => 'total views')
+export function boards(b, me = '', owner = false) {
+  const views = podium(b.topViews, me, r => num(r.views), () => 'total views', owner)
     || '<p class="empty">No scan yet. The daily scan fills this in.</p>';
-  const improved = podium(b.topImproved, me, r => signed(r.gained), r => r.followersGained == null ? 'views this week' : `${signed(r.followersGained)} followers`)
+  const improved = podium(b.topImproved, me, r => signed(r.gained), r => r.followersGained == null ? 'views this week' : `${signed(r.followersGained)} followers`, owner)
     || '<p class="empty">Needs a week of scans. Check back in a few days.</p>';
   return `<section aria-labelledby="lb"><div class="section-head"><h1 id="lb">Leaderboard</h1><span class="eyebrow">${b.total} clipper${b.total === 1 ? '' : 's'} · updated daily</span></div>
-<div class="boards"><article class="board"><h2>Most views</h2><p class="rule muted">Total views on all videos on the profile.</p>${views}${fullTable(b.viewsBoard, me, [['Views', r => num(r.views)]])}</article>
-<article class="board"><h2>Most improved</h2><p class="rule muted">Most views gained in the last 7 days.</p>${improved}${fullTable(b.improvedBoard, me, [['Gained', r => signed(r.gained)]])}</article></div></section>`;
+<div class="boards"><article class="board"><h2>Most views</h2><p class="rule muted">Total views on all videos on the profile.${owner ? ' Click a name for their profile.' : ''}</p>${views}${fullTable(b.viewsBoard, me, [['Views', r => num(r.views)]], owner)}</article>
+<article class="board"><h2>Most improved</h2><p class="rule muted">Most views gained in the last 7 days.</p>${improved}${fullTable(b.improvedBoard, me, [['Gained', r => signed(r.gained)]], owner)}</article></div></section>`;
 }
 
 // ------------------------------------------------------------------ my account
@@ -106,12 +113,15 @@ export function myAccount(m, now = Date.now()) {
 ${m.previous ? `<p class="note">This week = ${date(m.previous.takenAt)} to ${date(l.takenAt)}.</p>` : `<p class="note">First scan ${date(l.takenAt)}. Weekly gains show after a week of scans.</p>`}
 ${chart(m.history)}`
     : `<p class="note">Your TikTok numbers appear after the next daily scan.</p>`;
-  return `<section aria-labelledby="mine"><div class="section-head"><h1 id="mine">My account</h1><a class="eyebrow handle" href="${profile(m.username)}" target="_blank" rel="noopener">@${esc(m.username)} ↗</a></div>
+  return `<section aria-labelledby="mine"><div class="section-head"><h1 id="mine">My account</h1><a class="eyebrow handle" href="${profile(m.handle || m.username)}" target="_blank" rel="noopener">@${esc(m.handle || m.username)} ↗</a></div>
 ${gameAccess(m.access, now)}
 <h2 class="sub">TikTok</h2>
 <div class="ranks">${rank(m.viewsRank, m.viewsRanked, 'Most views')}${rank(m.improvedRank, m.improvedRanked, 'Most improved')}</div>
 ${m.lastError ? `<p class="note error">${esc(scanError[m.lastError] || scanError.no_data)}</p>` : ''}${body}
-${instagramBlock(m.instagram, now)}</section>`;
+${instagramBlock(m.instagram, now)}
+${m.posts ? `<h2 class="sub">Your posts</h2>
+<div class="row-actions"><button class="chip-button" data-act="scan-me">Just posted? Check now</button><span class="muted">The scan reads your profile every 2 hours.</span></div>
+${postStatsCards(m.stats)}${postsTables(m.posts, m.joinedAt, now)}` : ''}</section>`;
 }
 
 const igError = {
@@ -151,6 +161,67 @@ export function chart(history, { width = 900, height = 200 } = {}) {
   const dots = pts.map((p, i) => `<circle class="chart-dot" cx="${x(i)}" cy="${y(p.views)}" r="3.5"><title>${date(p.takenAt)}: ${full.format(p.views)} views</title></circle>`).join('');
   const labels = pts.map((p, i) => i === 0 || i === pts.length - 1 ? `<text class="chart-axis" x="${x(i)}" y="${height - 6}" text-anchor="${i ? 'end' : 'start'}">${date(p.takenAt)}</text>` : '').join('');
   return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Total views per scan">${ticks}<path class="chart-line" d="${line}"/>${dots}${labels}</svg>`;
+}
+
+// ------------------------------------------------------------------ posts and profiles
+
+const plain = (label, value, note = '') => `<div class="stat"><div class="label">${label}</div><div class="num">${value}</div>${note ? `<div class="delta flat">${note}</div>` : ''}</div>`;
+
+// What a clipper's posts add up to (postStats in board.js).
+export function postStatsCards(st) {
+  if (!st) return '';
+  return `<div class="stats">${plain('Posts since joining', num(st.sinceJoining), `${num(st.posts)} seen in all`)}${plain('Shredbound clips', num(st.shredboundSinceJoining), `${num(st.shredbound)} in all`)}${plain('Views on Shredbound clips', num(st.shredboundViews), `TikTok, on all ${num(st.shredbound)}`)}${plain('Average views', num(st.averageViews), 'per TikTok post')}${plain('Last post', st.lastPostAt ? esc(rel(st.lastPostAt)) : '—', st.lastShredboundAt ? `Shredbound ${esc(rel(st.lastShredboundAt))}` : 'no Shredbound clip yet')}</div>`;
+}
+
+function postRow(p, now) {
+  const tiktok = p.platform === 'tiktok';
+  // Engagement needs the post's own page (likes, comments, shares); until it is read, none is shown.
+  const engaged = tiktok && p.views && p.likes != null ? (p.likes + (p.comments || 0) + (p.shares || 0)) / p.views : null;
+  const text = p.caption || (tiktok ? 'TikTok video' : 'Instagram post');
+  return `<tr><td><span title="${esc(dateTime(p.postedAt))}">${esc(date(p.postedAt))}</span><br><small class="muted">${esc(rel(p.postedAt, now))}</small></td>
+<td><span class="pill ${tiktok ? 'ok' : 'upcoming'}">${tiktok ? 'TikTok' : 'Instagram'}</span>${p.kind && p.kind !== 'video' ? `<br><small class="muted">${esc(p.kind)}</small>` : ''}</td>
+<td class="post"><a class="cap" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(text)}">${esc(text)}</a>${p.shredbound ? '<span class="tag">Shredbound</span>' : ''}</td>
+<td class="n">${num(p.views)}</td><td class="n">${num(p.likes)}</td><td class="n">${num(p.comments)}</td><td class="n">${tiktok ? num(p.shares) : '—'}</td><td class="n">${tiktok ? num(p.saves) : '—'}</td><td class="n">${pct(engaged)}</td><td class="n">${length(p.durationS)}</td></tr>`;
+}
+
+// Every post the scan has seen: the ones since joining first, the older ones folded away.
+export function postsTables(posts, joinedAt, now = Date.now()) {
+  if (!posts?.length) return '<p class="empty">No posts seen yet. They show after the next scan.</p>';
+  const since = joinedAt ? Date.parse(joinedAt) : 0;
+  const mine = posts.filter(p => p.postedAt && Date.parse(p.postedAt) >= since), older = posts.filter(p => !mine.includes(p));
+  const head = '<thead><tr><th>Posted</th><th>Where</th><th>Post</th><th class="n">Views</th><th class="n">Likes</th><th class="n">Comments</th><th class="n">Shares</th><th class="n">Saves</th><th class="n" title="(likes + comments + shares) / views">Engagement</th><th class="n">Length</th></tr></thead>';
+  const table = list => `<div class="scroll"><table class="posts">${head}<tbody>${list.map(p => postRow(p, now)).join('')}</tbody></table></div>`;
+  return `${mine.length ? table(mine) : '<p class="empty">No posts since joining yet.</p>'}
+${older.length ? `<details class="all"><summary>Before joining (${older.length})</summary>${table(older)}</details>` : ''}
+<p class="note">Views, likes, comments, shares and saves are read from each post's public page. Instagram shows no views without a login.</p>`;
+}
+
+const scanWords = { not_found: 'no such TikTok profile', private: 'profile is private', no_data: 'TikTok did not answer', blocked: 'TikTok blocked the scan' };
+
+// One clipper, for the owner: access, numbers over time and every post.
+export function clipperProfile(p, now = Date.now()) {
+  if (!p) return '';
+  const a = p.access || {}, t = p.tiktokStats || {}, l = t.latest, g = t.gained, ig = p.instagram || {};
+  const [cls, word] = STATUS[a.status] || ['bad', a.status === 'removed' ? 'Removed' : 'No code'];
+  const due = a.status !== 'active' ? '—' : a.excusedUntil ? `excused till ${esc(dateTime(a.excusedUntil))}` : Date.parse(a.dueAt) > now ? `${esc(dateTime(a.dueAt))} (${rel(a.dueAt, now)})` : '<b class="warn-text">overdue</b>';
+  const wrong = t.lastError === 'not_found'
+    ? `<p class="alert">TikTok has no profile <b>@${esc(p.tiktok)}</b>, so none of their posts can be read. Find their real @username (the one under the name on their TikTok profile) and press <b>Change TikTok</b>.</p>`
+    : t.lastError ? `<p class="note error">Last TikTok reading: ${esc(scanWords[t.lastError] || t.lastError)}.</p>` : '';
+  const igCards = ig.handle && ig.latest
+    ? `<h2 class="sub">Instagram <a class="eyebrow handle" href="${igProfile(ig.handle)}" target="_blank" rel="noopener">@${esc(ig.handle)} ↗</a></h2><div class="stats">${stat('Followers', ig.latest.followers, ig.gained?.followers)}${stat('Posts', ig.latest.posts, ig.gained?.posts)}${stat('Likes', ig.latest.likes, ig.gained?.likes)}</div>`
+    : ig.handle ? `<p class="note">Instagram @${esc(ig.handle)}: ${ig.error ? esc(ig.error.replace('_', ' ')) : 'not read yet'}.</p>` : '';
+  return `<section aria-labelledby="pf" class="profile"><a class="eyebrow back" href="#clippers">← Clippers</a>
+<div class="section-head"><h1 id="pf">@${esc(p.username)}</h1><div class="row-actions"><a class="eyebrow handle" href="${profile(p.tiktok)}" target="_blank" rel="noopener">TikTok @${esc(p.tiktok)} ↗</a>${ig.handle ? `<a class="eyebrow handle" href="${igProfile(ig.handle)}" target="_blank" rel="noopener">Instagram @${esc(ig.handle)} ↗</a>` : ''}</div></div>
+${wrong}
+<div class="row-actions"><button class="primary small" data-act="scan-now" data-user="${esc(p.username)}">Check now</button><button class="text-button" data-act="tiktok-set" data-user="${esc(p.username)}" data-tiktok="${esc(p.tiktok)}">Change TikTok</button><button class="text-button" data-act="ig-set" data-user="${esc(p.username)}" data-ig="${esc(ig.handle || '')}">${ig.handle ? 'Change' : 'Add'} Instagram</button><span class="muted">Last read ${t.lastReadAt ? esc(rel(t.lastReadAt, now)) : 'never'}</span></div>
+<dl class="facts"><div><dt>Status</dt><dd><span class="pill ${cls}">${esc(word)}</span></dd></div><div><dt>Last post</dt><dd>${a.lastVideoAt ? esc(rel(a.lastVideoAt, now)) : 'none seen'}</dd></div><div><dt>Next post due</dt><dd>${due}</dd></div><div><dt>Last played</dt><dd>${a.lastPlayedAt ? esc(rel(a.lastPlayedAt, now)) : 'never'}</dd></div><div><dt>Played</dt><dd>${a.playSeconds ? `${Math.round(a.playSeconds / 360) / 10} h` : '—'} on ${num(a.devices ?? 0)} device${a.devices === 1 ? '' : 's'}</dd></div><div><dt>Joined</dt><dd>${esc(date(p.joinedAt))}</dd></div>${p.email ? `<div><dt>Email</dt><dd>${esc(p.email)}</dd></div>` : ''}</dl>
+${a.reason ? `<p class="note">Reason: ${esc(a.reason.reason)} <span class="muted">(until ${esc(date(a.reason.until))})</span></p>` : ''}
+<h2 class="sub">TikTok</h2>
+${l ? `<div class="stats">${stat('Total views', l.views, g?.views)}${stat('Followers', l.followers, g?.followers)}${stat('Likes', l.likes, g?.likes)}${stat('Videos', l.videos, g?.videos)}</div>${chart(t.history)}` : '<p class="note">No TikTok reading yet.</p>'}
+${igCards}
+<h2 class="sub">Posts</h2>
+${postStatsCards(p.stats)}
+${postsTables(p.posts, p.joinedAt, now)}</section>`;
 }
 
 // ------------------------------------------------------------------ events
@@ -222,16 +293,21 @@ export function clippersAdmin(list, now = Date.now()) {
       c.email ? `<button class="text-button" data-act="welcome" data-user="${esc(c.username)}">Mail code again</button>` : '',
       `<button class="text-button danger" data-act="remove" data-user="${esc(c.username)}">Remove</button>`,
     ].join('');
-    return `<tr><td><a href="${profile(c.username)}" target="_blank" rel="noopener">@${esc(c.username)}</a>${c.email ? `<br><small class="muted">${esc(c.email)}</small>` : ''}${c.welcome ? `<br><small class="${c.welcome === 'sent' ? 'ok-text' : 'warn-text'}">code mail: ${esc(c.welcome)}</small>` : ''}${c.lastScanError ? `<br><small class="error">scan: ${esc(c.lastScanError)}</small>` : ''}</td>
+    const handle = c.tiktok || c.username;
+    const scan = !c.lastScanError ? ''
+      : c.lastScanError === 'not_found' ? `<br><small class="warn-text">TikTok has no @${esc(handle)}</small> <button class="text-button" data-act="tiktok-set" data-user="${esc(c.username)}" data-tiktok="${esc(handle)}">Fix</button>`
+      : `<br><small class="error">scan: ${esc(c.lastScanError)}</small>`;
+    return `<tr><td><a class="user" href="${profileHash(c.username)}"><b>@${esc(c.username)}</b></a> <a class="muted" href="${profile(handle)}" target="_blank" rel="noopener" title="TikTok profile">↗</a>${handle !== c.username ? `<br><small class="muted">TikTok @${esc(handle)}</small>` : ''}${c.email ? `<br><small class="muted">${esc(c.email)}</small>` : ''}${c.welcome ? `<br><small class="${c.welcome === 'sent' ? 'ok-text' : 'warn-text'}">code mail: ${esc(c.welcome)}</small>` : ''}${scan}</td>
 <td>${igCell(c, now)}</td>
 <td class="mono">${esc(a.code || '—')}</td><td>${statusCell(c.removedAt ? { status: 'removed' } : a)}</td>
+<td class="n">${num(c.views)}${c.stats ? `<br><small class="muted">${num(c.stats.sinceJoining)} posts · ${num(c.stats.shredboundSinceJoining)} Shredbound</small>` : ''}</td>
 <td>${a.lastVideoAt ? rel(a.lastVideoAt, now) : 'none'}</td><td>${a.lastPlayedAt ? rel(a.lastPlayedAt, now) : 'never'}</td><td>${due}</td>
 <td class="reason-cell">${r ? `${esc(r.reason)}<br><small class="muted">until ${esc(date(r.until))}</small>` : '—'}</td>
 <td class="n">${a.devices}</td><td class="actions">${acts}</td></tr>`;
   };
   return `<section aria-labelledby="cl"><div class="section-head"><h1 id="cl">Clippers</h1><span class="eyebrow">${live.length} active · ${lost} lost access</span></div>
-<p class="note">Everyone joins with the clipper code and gets their own game code. The daily scan (on Supabase, every day at 17:00 UTC) reads their TikTok and Instagram and takes the game code of anyone who played without posting on either for 3 days, unless they gave a reason.</p>
-${live.length ? `<div class="scroll"><table class="admin"><thead><tr><th>Clipper</th><th>Instagram</th><th>Game code</th><th>Status</th><th>Last video</th><th>Last played</th><th>Next video due</th><th>Reason</th><th class="n">Devices</th><th></th></tr></thead><tbody>${live.map(row).join('')}</tbody></table></div>` : '<p class="empty">Nobody has joined yet.</p>'}
+<p class="note">Click a clipper for their profile: total views and every post with its own numbers. The scan reads their TikTok and Instagram every 2 hours; at 17:00 UTC each day it also takes the game code of anyone who played without posting on either for 3 days, unless they gave a reason.</p>
+${live.length ? `<div class="scroll"><table class="admin"><thead><tr><th>Clipper</th><th>Instagram</th><th>Game code</th><th>Status</th><th class="n">Views</th><th>Last video</th><th>Last played</th><th>Next video due</th><th>Reason</th><th class="n">Devices</th><th></th></tr></thead><tbody>${live.map(row).join('')}</tbody></table></div>` : '<p class="empty">Nobody has joined yet.</p>'}
 ${removed.length ? `<details class="all"><summary>Removed (${removed.length})</summary><div class="scroll"><table class="admin"><tbody>${removed.map(row).join('')}</tbody></table></div></details>` : ''}</section>`;
 }
 

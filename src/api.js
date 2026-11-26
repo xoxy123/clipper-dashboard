@@ -5,6 +5,7 @@ const text = {
   pending: 'You already applied. You get a mail when you are approved.',
   bad_email: 'That email does not look right.',
   bad_username: 'Type your TikTok username (letters, numbers, _ and . only).',
+  tiktok_not_found: "TikTok has no profile with that username. Type your @username (the one under your name on your TikTok profile), not your display name.",
   bad_instagram: 'Type your Instagram username (letters, numbers, _ and . only).',
   taken: 'That TikTok username already joined. Log in with your game code instead (or DM willll0838 on Discord).',
   removed: 'This account was not approved or was removed. DM willll0838 on Discord.',

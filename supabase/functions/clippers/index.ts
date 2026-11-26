@@ -31,14 +31,21 @@
 //   owner.event.save {token, id?, title, details, prize, startsAt, endsAt}
 //   owner.event.delete {token, id}
 //   admin.list | admin.record {snapshots} | admin.remove {username}   (x-admin-secret: the old browser scan)
-//   cron.scan                     the daily scan on Supabase (x-cron-secret from pg_cron, or x-admin-secret); see scan.js
+//   admin.state | admin.profile {username}   (x-admin-secret) what the owner sees, for checks and scripts
+//   cron.scan {enforce?}          the scan on Supabase (x-cron-secret from pg_cron, or x-admin-secret); see scan.js.
+//                                 Daily at 17:00 UTC it applies the 3-day rule; every 2 hours ({enforce:false}) it only reads.
 //   instagram {token, instagram}  (clipper) | owner.instagram {token, username, instagram}   set or clear ("") the Instagram username
-//   refusals: {ok:false, error:"bad_code"|"bad_username"|"taken"|"removed"|"invalid"|"forbidden"|"limited"|"bad_request"}
+//   profile {token, username?}    -> {ok, profile}  one clipper's numbers and every post the scan has seen (a clipper: their own)
+//   scan.me {token}               (clipper) read their TikTok and Instagram now (at most every 10 minutes; never applies the rule)
+//   owner.scan {token, username}  read one clipper now (never applies the rule) -> {ok, result, profile}
+//   owner.tiktok {token, username, tiktok}  the TikTok handle to read when it is not their username ("" = their username);
+//                                 restarts their 3 days and reads them now -> {ok, result, profile}
+//   refusals: {ok:false, error:"bad_code"|"bad_username"|"tiktok_not_found"|"taken"|"removed"|"invalid"|"forbidden"|"limited"|"bad_request"}
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { accessStatus, boardFor, cleanUsername, clipRule, summarize } from "./board.js";
+import { accessStatus, boardFor, cleanUsername, clipRule, daily, postStats, postView, summarize } from "./board.js";
 import { cleanEmail, sendMail } from "./mail.ts";
-import { cleanInstagram, newest, parseInstagramEmbed, parseTikTokEmbed, parseTikTokProfile, rollTotal } from "./scan.js";
+import { cleanInstagram, detailDue, newest, parseInstagramEmbed, parseTikTokEmbed, parseTikTokProfile, parseTikTokVideo, rollTotal } from "./scan.js";
 import { WELCOME_SUBJECT, welcomeMailText } from "./welcome.ts";
 
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -169,24 +176,39 @@ interface Account {
   welcome_mailed_at: string | null;
   welcome_error: string | null;
   instagram: string | null;
+  tiktok: string | null;
+  tiktok_set_at: string | null;
 }
 interface CodeRow { id: number; revoked_at: string | null; revoked_reason: string | null }
 interface DeviceRow { code_id: number; last_played_at: string | null; play_seconds: number }
 interface ReasonRow { id: number; username: string; reason: string; created_at: string; until: string; ended_at: string | null; ended_by: string | null }
 
 async function accounts(includeRemoved = false): Promise<Account[]> {
-  let q = supabase.from("clipper_accounts").select("username, joined_at, removed_at, game_code, game_code_id, access_restored_at, lost_access_at, email, welcome_mailed_at, welcome_error, instagram");
+  let q = supabase.from("clipper_accounts").select("username, joined_at, removed_at, game_code, game_code_id, access_restored_at, lost_access_at, email, welcome_mailed_at, welcome_error, instagram, tiktok, tiktok_set_at");
   if (!includeRemoved) q = q.is("removed_at", null);
   // Applicants waiting for (or turned down by) the owner are not clippers yet.
   q = q.eq("status", "approved");
   return (must(await q.order("username")) ?? []) as Account[];
 }
-async function snapshots(sinceDays = 120) {
-  return must(await supabase.from("clipper_snapshots")
-    .select("username, taken_at, ok, error, followers, likes, videos, views, last_video_at, ig_ok, ig_error, ig_last_post_at, ig_followers, ig_posts, ig_likes")
-    .gte("taken_at", new Date(Date.now() - sinceDays * DAY).toISOString())
-    .order("taken_at", { ascending: false }).limit(20000)) ?? [];
+async function snapshots(sinceDays = 120, usernames?: string[]) {
+  let q = supabase.from("clipper_snapshots")
+    .select("username, taken_at, ok, error, followers, likes, videos, views, last_video_at, ig_ok, ig_error, ig_last_post_at, ig_followers, ig_posts, ig_likes, source")
+    .gte("taken_at", new Date(Date.now() - sinceDays * DAY).toISOString());
+  if (usernames) q = q.in("username", usernames);
+  return must(await q.order("taken_at", { ascending: false }).limit(20000)) ?? [];
 }
+// Every post the scan has seen for these clippers, newest first.
+const POST_COLUMNS = "platform, video_id, username, handle, posted_at, value, views, likes, comments, shares, saves, caption, kind, duration_s, detail_at, updated_at";
+async function postRows(usernames: string[]): Promise<Record<string, any>[]> {
+  if (!usernames.length) return [];
+  return (must(await supabase.from("clipper_videos").select(POST_COLUMNS).in("username", usernames)
+    .order("posted_at", { ascending: false, nullsFirst: false }).limit(10000)) ?? []) as Record<string, any>[];
+}
+
+// The TikTok handle the scan reads: the one the owner set, else the username they joined with.
+const handleOf = (a: { username: string; tiktok?: string | null }) => a.tiktok || a.username;
+// The 3 days start again when the owner gives access back or corrects their TikTok handle.
+const restartedAt = (a: Account) => [a.access_restored_at, a.tiktok_set_at].filter(Boolean).sort().pop() ?? null;
 async function codes(ids: number[]): Promise<Map<number, CodeRow>> {
   if (!ids.length) return new Map();
   const rows = must(await supabase.from("access_codes").select("id, revoked_at, revoked_reason").in("id", ids)) as CodeRow[];
@@ -217,15 +239,18 @@ async function events() {
   return rows.map((e: Record<string, unknown>) => ({ id: e.id, title: e.title, details: e.details, prize: e.prize, startsAt: e.starts_at, endsAt: e.ends_at }));
 }
 
-// The newest video a scan has seen for each clipper (a deleted video still counts as posted).
+// The newest post a scan has seen for each clipper (a deleted video still counts as posted):
+// the readings' newest video, and every post kept in clipper_videos.
 // A post or reel on their Instagram counts as clipping too (William, 2026-11-23).
-function lastVideos(snaps: { username: string; last_video_at: string | null; ig_last_post_at?: string | null }[]) {
+function lastVideos(snaps: { username: string; last_video_at: string | null; ig_last_post_at?: string | null }[], posts: Record<string, any>[] = []) {
   const out = new Map<string, string>();
-  for (const s of snaps) {
-    for (const t of [s.last_video_at, s.ig_last_post_at]) {
-      if (t && (!out.has(s.username) || t > out.get(s.username)!)) out.set(s.username, t);
-    }
-  }
+  const see = (u: string, t: string | null | undefined) => {
+    if (!t) return;
+    const iso = new Date(t).toISOString();
+    if (!out.has(u) || iso > out.get(u)!) out.set(u, iso);
+  };
+  for (const s of snaps) { see(s.username, s.last_video_at); see(s.username, s.ig_last_post_at); }
+  for (const p of posts) see(p.username, p.posted_at);
   return out;
 }
 
@@ -255,7 +280,7 @@ const reasonView = (r: ReasonRow | null) => r && { id: r.id, reason: r.reason, c
 
 // One clipper's game access: the code, its status, and where the rule stands.
 function accessView(a: Account, code: CodeRow | undefined, dev: { lastPlayedAt: string | null; devices: number; playSeconds: number } | undefined, lastVideoAt: string | null, rs: ReasonRow[]) {
-  const rule = clipRule({ now: Date.now(), lastVideoAt, joinedAt: a.joined_at, restoredAt: a.access_restored_at, reasons: rs, lastPlayedAt: dev?.lastPlayedAt ?? null });
+  const rule = clipRule({ now: Date.now(), lastVideoAt, joinedAt: a.joined_at, restoredAt: restartedAt(a), reasons: rs, lastPlayedAt: dev?.lastPlayedAt ?? null });
   return {
     code: a.game_code,
     status: accessStatus(code ?? null, a.removed_at),
@@ -315,13 +340,23 @@ async function state(w: Who) {
   const board = boardFor(w.role === "clipper" ? w.username : "", summary);
   delete (board as Record<string, unknown>).me;
   const out: Record<string, unknown> = { ok: true, role: w.role, board, events: await events() };
-  const videos = lastVideos(snaps);
+  const rows = await postRows(w.role === "clipper" ? [w.username] : accs.map(a => a.username));
+  const videos = lastVideos(snaps, rows);
+  const postsOf = (u: string) => rows.filter(r => r.username === u).map(postView);
   if (w.role === "clipper") {
     const a = accs.find(x => x.username === w.username);
     if (!a) return null;
     const id = a.game_code_id ? [Number(a.game_code_id)] : [];
     const [cs, ds, rs] = await Promise.all([codes(id), devices(id), reasons([a.username])]);
-    out.me = { ...boardFor(a.username, summary).me, access: accessView(a, cs.get(id[0]), ds.get(id[0]), videos.get(a.username) ?? null, rs), instagram: instagramView(a.instagram, snaps, a.username) };
+    const posts = postsOf(a.username);
+    out.me = {
+      ...boardFor(a.username, summary).me,
+      handle: handleOf(a),
+      access: accessView(a, cs.get(id[0]), ds.get(id[0]), videos.get(a.username) ?? null, rs),
+      instagram: instagramView(a.instagram, snaps, a.username),
+      posts,
+      stats: postStats(posts, a.joined_at),
+    };
   } else {
     const ids = accs.map(a => Number(a.game_code_id)).filter(Boolean);
     const [cs, ds, rs] = await Promise.all([codes(ids), devices(ids), reasons()]);
@@ -333,6 +368,7 @@ async function state(w: Who) {
       const mine = rs.filter(r => r.username === a.username);
       return {
         username: a.username,
+        tiktok: handleOf(a),
         email: a.email,
         welcome: a.welcome_mailed_at ? "sent" : a.welcome_error ? "failed: " + a.welcome_error : a.email ? "not sent" : null,
         joinedAt: a.joined_at,
@@ -341,12 +377,42 @@ async function state(w: Who) {
         instagram: instagramView(a.instagram, snaps, a.username),
         views: row?.latest?.views ?? null,
         gained: row?.gained?.views ?? null,
+        stats: postStats(postsOf(a.username), a.joined_at),
         access: accessView(a, cs.get(Number(a.game_code_id)), ds.get(Number(a.game_code_id)), videos.get(a.username) ?? null, mine),
         reasons: mine.slice(0, 5).map(r => ({ ...reasonView(r), endedAt: r.ended_at, endedBy: r.ended_by })),
       };
     });
   }
   return out;
+}
+
+// One clipper's profile: game access, their TikTok and Instagram numbers over
+// time, and every post the scan has seen with its own numbers. The owner sees
+// anyone's (with their email and reasons); a clipper sees their own.
+async function profile(username: string, owner: boolean) {
+  const a = (await accounts(owner)).find(x => x.username === username);
+  if (!a) return null;
+  const id = a.game_code_id ? [Number(a.game_code_id)] : [];
+  const [snaps, rows, cs, ds, rs] = await Promise.all([snapshots(120, [username]), postRows([username]), codes(id), devices(id), reasons([username])]);
+  const row = summarize([a], snaps).rows[0];
+  const posts = rows.map(postView);
+  const good = snaps.filter((x: Snap) => x.ok);
+  return {
+    username: a.username,
+    tiktok: handleOf(a),
+    tiktokSetAt: a.tiktok ? a.tiktok_set_at : null,
+    email: owner ? a.email : undefined,
+    joinedAt: a.joined_at,
+    removedAt: a.removed_at,
+    access: accessView(a, cs.get(id[0]), ds.get(id[0]), lastVideos(snaps, rows).get(a.username) ?? null, rs),
+    reasons: owner ? rs.slice(0, 10).map(r => ({ ...reasonView(r), endedAt: r.ended_at, endedBy: r.ended_by })) : undefined,
+    tiktokStats: { lastError: row.lastError, lastReadAt: snaps[0]?.taken_at ?? null, latest: row.latest, previous: row.previous, gained: row.gained, history: row.history },
+    instagram: instagramView(a.instagram, snaps, a.username),
+    instagramHistory: daily(snaps.filter((x: Snap) => x.ig_ok)).map((x: Snap) => ({ takenAt: x.taken_at, followers: x.ig_followers, likes: x.ig_likes, posts: x.ig_posts })),
+    readings: good.length,
+    stats: postStats(posts, a.joined_at),
+    posts,
+  };
 }
 
 // ------------------------------------------------------------------ actions
@@ -385,6 +451,12 @@ async function join(req: Request, body: Record<string, unknown>) {
   // A new clipper applies: the owner approves in the dashboard, and only then the
   // game code is made and mailed (owner.approve).
   if (!email) return json(req, { ok: false, error: "bad_email" });
+  // The TikTok username must be a real profile: one clipper typed their display
+  // name, every scan failed, and none of their posts were ever seen. Only a
+  // clear "no such user" refuses; a blocked or slow TikTok lets them apply.
+  if (parseTikTokProfile(await page(`https://www.tiktok.com/@${username}`, DESKTOP_UA)).error === "not_found") {
+    return json(req, { ok: false, error: "tiktok_not_found" });
+  }
   const { error } = await supabase.from("clipper_accounts").insert({ username, email, status: "pending", applied_at: new Date().toISOString() });
   if (error) {
     if ((error as { code?: string }).code === "23505") return json(req, { ok: false, error: "taken" });
@@ -448,12 +520,12 @@ async function setAccess(username: string, active: boolean) {
 }
 
 // After a scan: take the game code of every clipper the rule says lost it.
-async function enforce(usernames: string[]) {
+async function enforce3Days(usernames: string[]) {
   if (!usernames.length) return [];
   const accs = (await accounts()).filter(a => usernames.includes(a.username) && a.game_code_id);
   const ids = accs.map(a => Number(a.game_code_id));
-  const [cs, ds, rs, snaps] = await Promise.all([codes(ids), devices(ids), reasons(accs.map(a => a.username)), snapshots(30)]);
-  const videos = lastVideos(snaps);
+  const [cs, ds, rs, snaps, rows] = await Promise.all([codes(ids), devices(ids), reasons(accs.map(a => a.username)), snapshots(30), postRows(accs.map(a => a.username))]);
+  const videos = lastVideos(snaps, rows);
   const lost: string[] = [];
   for (const a of accs) {
     const code = cs.get(Number(a.game_code_id));
@@ -462,7 +534,7 @@ async function enforce(usernames: string[]) {
       now: Date.now(),
       lastVideoAt: videos.get(a.username) ?? null,
       joinedAt: a.joined_at,
-      restoredAt: a.access_restored_at,
+      restoredAt: restartedAt(a),
       reasons: rs.filter(r => r.username === a.username),
       lastPlayedAt: ds.get(Number(a.game_code_id))?.lastPlayedAt ?? null,
     });
@@ -502,41 +574,55 @@ async function page(url: string, ua: string): Promise<string> {
 const SPECIFIC = new Set(["not_found", "private"]);
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-// Reads every approved clipper once, records one snapshot each and runs the
-// 3-day rule. A clipper whose TikTok (or, when given, Instagram) could not be
-// read is recorded as a failed reading and never loses their code over it.
-async function runScan() {
-  const accs = await accounts();
+// Reads every approved clipper (or only some) once and records one snapshot
+// each: their TikTok profile and newest videos, each new or due post's own page
+// (likes, comments, shares, saves), and their Instagram when given. Only the
+// daily scan (enforce) runs the 3-day rule, and only on complete readings: a
+// clipper whose TikTok (or, when given, Instagram) could not be read never
+// loses their code over it.
+const DETAILS_PER_SCAN = 60;
+async function runScan({ enforce = true, only = null as string[] | null, source = "server" } = {}) {
+  let accs = await accounts();
+  if (only) accs = accs.filter(a => only.includes(a.username));
   const names = accs.map(a => a.username);
-  const snaps = await snapshots(60) as Snap[];
+  const snaps = (names.length ? await snapshots(60, names) : []) as Snap[];
   const known = new Map<string, Map<string, number>>();
+  const stored = new Map<string, { detailAt: string | null; postedAt: string | null }>();
   if (names.length) {
-    const rows = (must(await supabase.from("clipper_videos").select("platform, video_id, username, value").in("username", names)) ?? []) as
-      { platform: string; video_id: string; username: string; value: number }[];
+    const rows = (must(await supabase.from("clipper_videos").select("platform, video_id, username, value, posted_at, detail_at").in("username", names)) ?? []) as
+      { platform: string; video_id: string; username: string; value: number; posted_at: string | null; detail_at: string | null }[];
     for (const r of rows) {
       const k = r.platform + ":" + r.username;
       if (!known.has(k)) known.set(k, new Map());
       known.get(k)!.set(r.video_id, Number(r.value) || 0);
+      stored.set(r.platform + ":" + r.video_id, { detailAt: r.detail_at, postedAt: r.posted_at });
     }
   }
   const lastGood = (u: string) => snaps.find(s => s.username === u && s.ok) ?? null;
   const lastIg = (u: string) => snaps.find(s => s.username === u && s.ig_ok) ?? null;
 
   const takenAt = new Date().toISOString();
+  const now = Date.parse(takenAt);
   const rows: Record<string, unknown>[] = [];
-  const videoRows: Record<string, unknown>[] = [];
-  const results: { username: string; tiktok: string; instagram: string | null }[] = [];
+  // Three groups, each with the same keys, so an upsert never clears a column
+  // another group filled: what every reading sees, then each post's own page.
+  const seenRows: Record<string, unknown>[] = [];
+  const tiktokDetails: Record<string, unknown>[] = [];
+  const instagramDetails: Record<string, unknown>[] = [];
+  const results: { username: string; tiktok: string; handle: string; instagram: string | null; details: number }[] = [];
+  let budget = DETAILS_PER_SCAN;
 
   for (const a of accs) {
-    const u = a.username;
+    const u = a.username, handle = handleOf(a);
     const [profileHtml, embedHtml] = await Promise.all([
-      page(`https://www.tiktok.com/@${u}`, DESKTOP_UA),
-      page(`https://www.tiktok.com/embed/@${u}`, DESKTOP_UA),
+      page(`https://www.tiktok.com/@${handle}`, DESKTOP_UA),
+      page(`https://www.tiktok.com/embed/@${handle}`, DESKTOP_UA),
     ]);
     const profile = parseTikTokProfile(profileHtml);
-    const embed = parseTikTokEmbed(embedHtml, u);
+    const embed = parseTikTokEmbed(embedHtml, handle);
     const prev = lastGood(u);
-    const row: Record<string, unknown> = { username: u, taken_at: takenAt, source: "server" };
+    const row: Record<string, unknown> = { username: u, taken_at: takenAt, source };
+    let details = 0;
     if (embed.ok) {
       const mine = known.get("tiktok:" + u) ?? new Map();
       const fresh = embed.items.filter((i: { id: string }) => !mine.has(i.id)).length;
@@ -548,9 +634,26 @@ async function runScan() {
         views: rollTotal({ prevTotal: prev?.views ?? null, lastReadAt: prev?.taken_at ?? null, known: mine, items: embed.items }),
         last_video_at: newest(embed.items),
       });
-      for (const i of embed.items) videoRows.push({ platform: "tiktok", video_id: i.id, username: u, posted_at: i.postedAt, value: i.value, updated_at: takenAt });
+      for (const i of embed.items) {
+        seenRows.push({ platform: "tiktok", video_id: i.id, username: u, handle, posted_at: i.postedAt, value: i.value, views: i.value, caption: i.caption, updated_at: takenAt, last_seen_at: takenAt });
+      }
+      // Each new or due post's own page: likes, comments, shares, saves, length.
+      const due = embed.items.filter((i: { id: string; postedAt: string | null }) =>
+        detailDue(stored.get("tiktok:" + i.id) ?? { detailAt: null, postedAt: i.postedAt }, now)).slice(0, Math.max(0, budget));
+      budget -= due.length;
+      const pages = await inBatches(due, 3, (i: { id: string }) => page(`https://www.tiktok.com/@${handle}/video/${i.id}`, DESKTOP_UA));
+      due.forEach((i: { id: string; value: number; caption: string | null }, k: number) => {
+        const d = parseTikTokVideo(pages[k]);
+        if (!d.ok || d.id !== i.id) return;
+        details++;
+        tiktokDetails.push({
+          platform: "tiktok", video_id: i.id, username: u,
+          views: d.views ?? i.value, likes: d.likes, comments: d.comments, shares: d.shares, saves: d.saves,
+          duration_s: d.durationS, kind: d.kind, detail_at: takenAt,
+        });
+      });
     } else {
-      const error = SPECIFIC.has(profile.error) ? profile.error : embed.error;
+      const error = String((SPECIFIC.has(String(profile.error)) ? profile.error : embed.error) ?? "no_data");
       Object.assign(row, { ok: false, error: SCAN_ERRORS.has(error) ? error : "no_data" });
     }
 
@@ -565,23 +668,35 @@ async function runScan() {
           ig_likes: rollTotal({ prevTotal: prevIg?.ig_likes ?? null, lastReadAt: prevIg?.taken_at ?? null, known: mine, items: ig.items }),
           ig_last_post_at: newest(ig.items),
         });
-        for (const i of ig.items) videoRows.push({ platform: "instagram", video_id: i.id, username: u, posted_at: i.postedAt, value: i.value, updated_at: takenAt });
+        for (const i of ig.items) {
+          seenRows.push({ platform: "instagram", video_id: i.id, username: u, handle: a.instagram, posted_at: i.postedAt, value: i.value, views: null, caption: i.caption, updated_at: takenAt, last_seen_at: takenAt });
+          instagramDetails.push({ platform: "instagram", video_id: i.id, username: u, likes: i.value, comments: i.comments, kind: i.kind, detail_at: takenAt });
+        }
       } else {
         Object.assign(row, { ig_ok: false, ig_error: ig.error });
       }
     }
     rows.push(row);
-    results.push({ username: u, tiktok: row.ok ? "ok" : String(row.error), instagram: a.instagram ? (row.ig_ok ? "ok" : String(row.ig_error)) : null });
-    await pause(700 + Math.random() * 800);
+    results.push({ username: u, handle, tiktok: row.ok ? "ok" : String(row.error), instagram: a.instagram ? (row.ig_ok ? "ok" : String(row.ig_error)) : null, details });
+    if (accs.length > 1) await pause(700 + Math.random() * 800);
   }
 
   if (rows.length) must(await supabase.from("clipper_snapshots").insert(rows));
-  if (videoRows.length) must(await supabase.from("clipper_videos").upsert(videoRows, { onConflict: "platform,video_id" }));
-  // The rule runs only on complete, fresh readings: TikTok read, and Instagram
-  // read too when the clipper gave one. A failed scan never takes a code.
+  for (const group of [seenRows, tiktokDetails, instagramDetails]) {
+    if (group.length) must(await supabase.from("clipper_videos").upsert(group, { onConflict: "platform,video_id" }));
+  }
+  // The readings between the daily ones are kept for 2 days; the daily ones for good.
+  await supabase.from("clipper_snapshots").delete().in("source", ["refresh", "manual"]).lt("taken_at", new Date(now - 2 * DAY).toISOString());
   const complete = rows.filter(r => r.ok && (r.ig_ok === undefined || r.ig_ok)).map(r => String(r.username));
-  const lostAccess = await enforce(complete);
-  return { scanned: rows.length, ok: rows.filter(r => r.ok).length, lostAccess, results };
+  const lostAccess = enforce ? await enforce3Days(complete) : [];
+  return { scanned: rows.length, read: rows.filter(r => r.ok).length, enforced: enforce, lostAccess, results };
+}
+
+// Runs fn over the list, `size` at a time, and keeps the order.
+async function inBatches<T, R>(list: T[], size: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < list.length; i += size) out.push(...await Promise.all(list.slice(i, i + size).map(fn)));
+  return out;
 }
 
 Deno.serve(async req => {
@@ -600,6 +715,12 @@ Deno.serve(async req => {
       if (!(await isAdmin(req))) { await fail(req); return json(req, { ok: false, error: "unauthorized" }, 401); }
       if (action === "admin.list") {
         return json(req, { ok: true, usernames: (await accounts()).map(a => a.username) });
+      }
+      if (action === "admin.state") return json(req, await state({ role: "owner" }));
+      if (action === "admin.profile") {
+        const username = cleanUsername(body.username);
+        const p = username ? await profile(username, true) : null;
+        return p ? json(req, { ok: true, profile: p }) : json(req, { ok: false, error: "not_found" }, 404);
       }
       if (action === "admin.record") {
         const list = Array.isArray(body.snapshots) ? body.snapshots as Record<string, unknown>[] : [];
@@ -622,7 +743,7 @@ Deno.serve(async req => {
         }
         if (rows.length) must(await supabase.from("clipper_snapshots").insert(rows));
         // The rule runs only on fresh readings: a failed scan never takes a code.
-        const lost = await enforce(rows.filter(r => r.ok && !body.noEnforce).map(r => r.username));
+        const lost = await enforce3Days(rows.filter(r => r.ok && !body.noEnforce).map(r => r.username));
         return json(req, { ok: true, recorded: rows.length, skipped: list.length - rows.length, lostAccess: lost });
       }
       if (action === "admin.remove") {
@@ -640,7 +761,9 @@ Deno.serve(async req => {
       const stored = String((await getConfig() as unknown as Record<string, unknown>).scan_cron_secret ?? "");
       const byCron = !!cronSecret && !!stored && same(await sha256(cronSecret), await sha256(stored));
       if (!byCron && !(await isAdmin(req))) { await fail(req); return json(req, { ok: false, error: "unauthorized" }, 401); }
-      return json(req, { ok: true, ...(await runScan()) });
+      // The daily scan applies the 3-day rule; the 2-hourly one ({enforce:false}) only reads.
+      const enforce = body.enforce !== false;
+      return json(req, { ok: true, ...(await runScan({ enforce, source: enforce ? "server" : "refresh" })) });
     }
 
     const w = await who(body.token);
@@ -672,12 +795,50 @@ Deno.serve(async req => {
       return json(req, await setInstagram(w.username, body.instagram));
     }
 
+    if (action === "profile") {
+      const username = w.role === "owner" ? cleanUsername(body.username) : w.username;
+      const p = username ? await profile(username, w.role === "owner") : null;
+      return p ? json(req, { ok: true, profile: p }) : json(req, { ok: false, error: "not_found" }, 404);
+    }
+
+    if (action === "scan.me") {
+      // "I just posted": read their TikTok and Instagram now, at most every 10
+      // minutes. It never applies the rule; only the daily scan does.
+      if (w.role !== "clipper") return json(req, { ok: false, error: "forbidden" }, 403);
+      const { data: last } = await supabase.from("clipper_snapshots").select("taken_at").eq("username", w.username).order("taken_at", { ascending: false }).limit(1).maybeSingle();
+      const recent = last && Date.now() - Date.parse(last.taken_at) < 10 * 60_000;
+      const scan = recent ? null : await runScan({ only: [w.username], enforce: false, source: "manual" });
+      return json(req, { ok: true, skipped: !!recent, result: scan?.results?.[0] ?? null, profile: await profile(w.username, false) });
+    }
+
     if (action.startsWith("owner.")) {
       if (w.role !== "owner") return json(req, { ok: false, error: "forbidden" }, 403);
       if (action === "owner.instagram") {
         const username = cleanUsername(body.username);
         if (!username) return json(req, { ok: false, error: "bad_username" });
         return json(req, await setInstagram(username, body.instagram));
+      }
+      if (action === "owner.scan") {
+        const username = cleanUsername(body.username);
+        if (!username) return json(req, { ok: false, error: "bad_username" });
+        const scan = await runScan({ only: [username], enforce: false, source: "manual" });
+        if (!scan.scanned) return json(req, { ok: false, error: "not_found" }, 404);
+        return json(req, { ok: true, result: scan.results[0], profile: await profile(username, true) });
+      }
+      if (action === "owner.tiktok") {
+        // The TikTok handle to read, when the clipper joined with a name that is not
+        // their TikTok username. Their 3 days start again: until now the dashboard
+        // could not show them when their next video was due.
+        const username = cleanUsername(body.username);
+        const typed = String(body.tiktok ?? "").trim();
+        const handle = typed ? cleanUsername(typed) : null;
+        if (!username || (typed && !handle)) return json(req, { ok: false, error: "bad_username" });
+        const { data } = await supabase.from("clipper_accounts")
+          .update({ tiktok: handle && handle !== username ? handle : null, tiktok_set_at: new Date().toISOString() })
+          .eq("username", username).eq("status", "approved").select("username");
+        if (!data?.length) return json(req, { ok: false, error: "not_found" }, 404);
+        const scan = await runScan({ only: [username], enforce: false, source: "manual" });
+        return json(req, { ok: true, result: scan.results[0] ?? null, profile: await profile(username, true) });
       }
       if (action === "owner.access" || action === "owner.remove") {
         const username = cleanUsername(body.username);

@@ -1,13 +1,30 @@
 import { call } from './api.js';
-import { boards, myAccount, events, clippersAdmin, playtestersAdmin, applicationsAdmin, joinForm, nav, date, TABS } from './view.js';
+import { boards, myAccount, events, clippersAdmin, playtestersAdmin, applicationsAdmin, clipperProfile, joinForm, nav, date, TABS } from './view.js';
 const $ = id => document.getElementById(id);
 const main = $('main'), who = $('who'), logout = $('logout'), scan = $('scan'), tabs = $('tabs'), toast = $('toast');
 const KEY = 'clippers.token';
 const store = { get() { try { return localStorage.getItem(KEY) || ''; } catch { return ''; } }, set(v) { try { v ? localStorage.setItem(KEY, v) : localStorage.removeItem(KEY); } catch {} } };
 let token = store.get(), data = null, editing = null;
+// Clipper profiles the owner opened (#clipper/<username>), by username.
+const profiles = new Map();
 
 function say(msg) { toast.textContent = msg; toast.classList.add('show'); clearTimeout(say.t); say.t = setTimeout(() => toast.classList.remove('show'), 2600); }
-const tab = () => { const t = location.hash.slice(1), ids = TABS[data?.role || 'clipper'].map(x => x[0]); return ids.includes(t) ? t : ids[0]; };
+const tab = () => { const t = location.hash.slice(1), ids = TABS[data?.role || 'clipper'].map(x => x[0]); return t.startsWith('clipper/') && data?.role === 'owner' ? 'clippers' : ids.includes(t) ? t : ids[0]; };
+// The clipper whose profile is open, or null.
+const profileUser = () => { const t = location.hash.slice(1); if (!t.startsWith('clipper/') || data?.role !== 'owner') return null; try { return decodeURIComponent(t.slice(8)); } catch { return null; } };
+
+async function openProfile(user) {
+  try {
+    const r = await call('profile', { token, username: user });
+    profiles.set(user, r.profile);
+  } catch (x) {
+    if (profileUser() === user) main.innerHTML = `<p class="error">${x.message}</p><p><a href="#clippers">← Clippers</a></p>`;
+    return;
+  }
+  if (profileUser() === user) render();
+}
+// After a scan or a TikTok change: say what the reading found.
+const readWords = r => !r ? 'Read.' : r.tiktok === 'ok' ? `Read @${r.handle}: ${r.details} post${r.details === 1 ? '' : 's'} updated.` : r.tiktok === 'not_found' ? `TikTok has no profile @${r.handle}.` : `TikTok: ${r.tiktok.replace('_', ' ')}. Try again later.`;
 
 function showJoin(error = '') {
   data = null; who.textContent = ''; logout.hidden = true; scan.textContent = ''; tabs.innerHTML = ''; tabs.hidden = true;
@@ -28,9 +45,14 @@ function showJoin(error = '') {
 
 function render() {
   if (!data) return;
-  const t = tab(), owner = data.role === 'owner';
+  const t = tab(), owner = data.role === 'owner', user = profileUser();
   tabs.hidden = false; tabs.innerHTML = nav(data.role, t);
-  const html = t === 'account' ? myAccount(data.me) : t === 'events' ? events(data.events, owner, Date.now(), editing) : t === 'clippers' ? clippersAdmin(data.clippers || []) : t === 'playtesters' ? playtestersAdmin(data.playtesters || []) : t === 'applications' ? applicationsAdmin(data.applications || []) : boards(data.board, data.me?.username);
+  if (user) {
+    const p = profiles.get(user);
+    main.innerHTML = p ? clipperProfile(p) : '<div class="loading">Loading profile…</div>';
+    return;
+  }
+  const html = t === 'account' ? myAccount(data.me) : t === 'events' ? events(data.events, owner, Date.now(), editing) : t === 'clippers' ? clippersAdmin(data.clippers || []) : t === 'playtesters' ? playtestersAdmin(data.playtesters || []) : t === 'applications' ? applicationsAdmin(data.applications || []) : boards(data.board, data.me?.username, owner);
   main.innerHTML = html;
   if (t === 'events' && editing) $('event-form')?.querySelector('input')?.focus();
 }
@@ -42,6 +64,8 @@ async function load(quiet = false) {
     who.textContent = data.role === 'owner' ? 'Owner' : '@' + data.me.username; logout.hidden = false;
     scan.textContent = data.board.lastScan ? 'Last scan ' + date(data.board.lastScan) : 'No scan yet';
     render();
+    const user = profileUser();
+    if (user) openProfile(user);
   } catch (x) {
     if (x.code === 'invalid') { token = ''; store.set(''); return showJoin(); }
     if (quiet) return say(x.message);
@@ -80,7 +104,32 @@ main.addEventListener('click', async e => {
   else if (a === 'reject') { if (confirm(`Reject @${user}?`)) act(b, 'owner.reject', { username: user }, `@${user} rejected.`); }
   else if (a === 'ig-set') {
     const typed = prompt(`Instagram username for @${user} (empty to remove):`, b.dataset.ig || '');
-    if (typed !== null) act(b, 'owner.instagram', { username: user, instagram: typed }, typed.trim() ? 'Instagram saved. The next daily scan reads it.' : 'Instagram removed.');
+    if (typed !== null) {
+      await act(b, 'owner.instagram', { username: user, instagram: typed }, typed.trim() ? 'Instagram saved. The next scan reads it, or press Check now.' : 'Instagram removed.');
+      if (profileUser() === user) openProfile(user);
+    }
+  }
+  else if (a === 'scan-now' || a === 'tiktok-set') {
+    let payload = { username: user }, action = 'owner.scan';
+    if (a === 'tiktok-set') {
+      const typed = prompt(`@${user}'s real TikTok username (the @name under their name on their TikTok profile). Empty = @${user}.\nTheir 3 days start again now.`, b.dataset.tiktok || user);
+      if (typed === null) return;
+      payload = { username: user, tiktok: typed }; action = 'owner.tiktok';
+    }
+    b.disabled = true; say('Reading TikTok…');
+    try {
+      const r = await call(action, { token, ...payload });
+      profiles.set(user, r.profile); say(readWords(r.result));
+      await load(true);
+    } catch (x) { say(x.message); b.disabled = false; }
+  }
+  else if (a === 'scan-me') {
+    b.disabled = true; say('Reading your profile…');
+    try {
+      const r = await call('scan.me', { token });
+      say(r.skipped ? 'Checked less than 10 minutes ago. Try again in a bit.' : readWords(r.result));
+      await load(true);
+    } catch (x) { say(x.message); b.disabled = false; }
   }
   else if (a === 'remove') { if (confirm(`Remove @${user}? Their game code stops working and they cannot join again.`)) act(b, 'owner.remove', { username: user }, `@${user} removed.`); }
 });
@@ -109,6 +158,6 @@ main.addEventListener('submit', async e => {
   }
 });
 
-addEventListener('hashchange', () => { editing = null; render(); });
+addEventListener('hashchange', () => { editing = null; render(); const user = profileUser(); if (user) openProfile(user); });
 logout.onclick = () => { token = ''; store.set(''); location.hash = ''; showJoin(); };
 load();
